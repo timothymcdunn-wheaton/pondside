@@ -97,6 +97,8 @@ final class ScoreDocument {
     weak var delegate: ScoreDocumentDelegate?
 
     private(set) var status: CompileStatus = .idle
+    /// LilyPond's output from the latest compile, for the compiler-output pane.
+    private(set) var lastLog = ""
     private(set) var pages: [EngravedPage] = []
     private(set) var installation: LilyPondInstallation?
     private(set) var declaredVersion: LilyPondVersion?
@@ -331,6 +333,7 @@ final class ScoreDocument {
 
     private func finish(_ outcome: Outcome) {
         compileRunning = false
+        lastLog = outcome.result?.log ?? outcome.error ?? ""
         if let result = outcome.result {
             for f in files {
                 f.compiledText = f.pendingSnapshot

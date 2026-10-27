@@ -1,4 +1,5 @@
 import AppKit
+import PondsideCore
 
 /// The single always-on line of help and state at the bottom of the window:
 /// compile indicator, the 2–3 most relevant actions, zoom and toolchain.
@@ -103,7 +104,34 @@ final class StatusBarView: NSView {
         rightLabel.stringValue = inputText.isEmpty ? rightText : inputText + "      " + rightText
     }
 
+    private var hints: [String] = []
+    private var chordShowing = false
+
     func setHints(_ hints: [String]) {
+        self.hints = hints
+        if !chordShowing { hintsLabel.stringValue = hints.joined(separator: "   ·   ") }
+    }
+
+    /// The chord hint bar: what was typed, and every key that can follow
+    /// with its meaning. Learning is a side effect of use.
+    func showChord(typed: String, continuations: [Keymap.Continuation]) {
+        chordShowing = true
+        let keyAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(ofSize: Theme.secondarySize, weight: .semibold), .foregroundColor: Theme.accent,
+        ]
+        let labelAttrs: [NSAttributedString.Key: Any] = [.font: Theme.secondaryFont, .foregroundColor: Theme.text]
+        let groupAttrs: [NSAttributedString.Key: Any] = [.font: Theme.secondaryFont, .foregroundColor: Theme.secondaryText]
+        let s = NSMutableAttributedString(string: typed + "   ", attributes: keyAttrs)
+        for c in continuations {
+            s.append(NSAttributedString(string: c.key == " " ? "␣" : String(c.key), attributes: keyAttrs))
+            s.append(NSAttributedString(string: " " + (c.command == nil ? c.label + "…" : c.label) + "    ",
+                                        attributes: c.command == nil ? groupAttrs : labelAttrs))
+        }
+        hintsLabel.attributedStringValue = s
+    }
+
+    func endChord() {
+        chordShowing = false
         hintsLabel.stringValue = hints.joined(separator: "   ·   ")
     }
 

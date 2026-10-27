@@ -609,3 +609,51 @@ highlighting on real scores. C comes next, and mouse entry after it.
 - **Not yet:** adding to a chord by clicking at an existing note's x;
   inserting before a staff's first note; tab and percussion staves
   (fewer than five lines).
+
+### M3 — the interface
+
+**Built**
+
+- **The catalog** (`PondsideCore/Commands`) is the single list of
+  commands. Each entry has a title, a one-line gloss, a requirement
+  (selection, errors, several files) and its keys. Menus, the palette,
+  hover tips, the ⌥ reveal, the hint bar and the context overlay all
+  read it, so they can't disagree. `KeyboardAuditTests` is the "full
+  keyboard coverage audit". It fails if any command lacks a chord,
+  shortcut or direct key, or if chords collide, shadow each other, or run
+  past three keys after the leader. It runs on Linux.
+- **The leader.** Space in the score, ⌥Space anywhere. Departure from the
+  brief: Helix-style chords can't start with a bare letter here, because
+  `a`–`g` enter notes. ⌃Space was the first choice for the source pane,
+  but macOS reserves it for switching input sources. Groups: `f` file,
+  `g` go, `a` add, `e` edit, `v` view, `p` pane, `w` workspace, `h`
+  help. `␣ ␣` opens the palette and `␣ ?` the context overlay. Lexicon
+  chords (`l i`, `l p`, `l b`) arrive with M7, and `g m` / `g c` with the
+  timing work in M8, since they need measures and cues.
+- **Remapping.** `keymap.txt` holds lines of `command = chords` (or
+  `none`). A file that breaks the audit is ignored as a whole, so a typo
+  can never cost the user their keyboard. Vim and Emacs presets are
+  still to do: they are remap files, and they need the editor work in
+  M5 to be meaningful.
+- **The palette** ranks by fuzzy match: word starts and runs score best,
+  and a chord's letters typed as a query find their command. Then come
+  availability in context and recency. File, dynamic and workspace
+  pickers use the same panel.
+- **Panes.** `PaneLayout` keeps content unique across panes, and cycling
+  or jumping never changes geometry. Content that doesn't exist yet
+  (SuperCollider, Python, agent, cues, Lexicon, OSC) shows a placeholder
+  naming its milestone. Cycling skips those.
+- **Terminal.** SwiftTerm, macOS only. It is the first external package,
+  added only inside the macOS block of `Package.swift`, so the portable
+  build has no dependencies. Pinned to 1.5.x: later versions pull in
+  swift-subprocess.
+- **New score operations:** `toggleSpan` (slur, beam and hairpin from the
+  first selected note to the last) and `wrapTuplet`. `wrapTuplet` refuses
+  selections that cross `{ }` or `<< >>`, or that hold a scope operand.
+
+**Not yet**
+
+- Hover tips and the ⌥ reveal only cover the file menu and the status
+  line, because those are the only controls the window has. New controls
+  must call `HelpOverlay.register`.
+- The UI half of M3 has not been compiled; see the README status.

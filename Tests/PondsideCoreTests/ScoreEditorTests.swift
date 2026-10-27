@@ -89,6 +89,34 @@ final class ScoreEditorTests: XCTestCase {
         XCTAssertEqual(pitches(out2), ["0:0:1", "0:0:1", "6:0:0", "3:0:1"])
     }
 
+    func testSpansCoverTheSelection() {
+        func span(_ src: String, _ open: String, _ close: String) -> String? {
+            let tree = SyntaxTree(src)
+            return ScoreEditor(tree).toggleSpan(open: open, close: close, events: Array(tree.events.indices), name: "x")?
+                .edits.apply(to: src)
+        }
+        XCTAssertEqual(span("{ c'4 d' e' }", "(", ")"), "{ c'4( d' e') }")
+        XCTAssertEqual(span("{ c'4( d' e') }", "(", ")"), "{ c'4 d' e' }")
+        XCTAssertEqual(span("{ c'8 d' }", "[", "]"), "{ c'8[ d'] }")
+        XCTAssertEqual(span("{ c'2 d'2 }", "\\<", "\\!"), "{ c'2\\< d'2\\! }")
+        XCTAssertEqual(span("{ c'2 }", "\\<", "\\!"), "{ c'2\\< }")
+    }
+
+    func testTupletWrapsBalancedSelections() {
+        let src = "\\relative c' { c8 d e f }"
+        let tree = SyntaxTree(src)
+        let edit = ScoreEditor(tree).wrapTuplet(events: [0, 1, 2])
+        let out = edit.map { $0.edits.apply(to: src) }
+        XCTAssertEqual(out, "\\relative c' { \\tuplet 3/2 { c8 d e } f }")
+        XCTAssertEqual(pitches(out!), pitches(src))
+        XCTAssertEqual(durations(out!), ["8", "8", "8", "8"])
+        // Across a brace: refused.
+        let nested = "{ c'8 { d' e' } f' }"
+        XCTAssertNil(ScoreEditor(SyntaxTree(nested)).wrapTuplet(events: [0, 1]))
+        XCTAssertNil(ScoreEditor(SyntaxTree(nested)).wrapTuplet(events: [0, 1, 2]))
+        XCTAssertNotNil(ScoreEditor(SyntaxTree(nested)).wrapTuplet(events: [0, 1, 2, 3]))
+    }
+
     func testInsertAtAnExplicitOctave() {
         // Mouse entry: g'' after e' in relative mode; f keeps sounding f'.
         let out = applying("\\relative c' { c4 e f }", at: "e f") { $0.insert(step: 4, after: $1, duration: nil, octave: 2) }!

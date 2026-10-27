@@ -1,5 +1,6 @@
 import AppKit
 import UniformTypeIdentifiers
+import PondsideCore
 
 /// Application entry point for the macOS front end.
 @MainActor
@@ -111,6 +112,7 @@ final class PondsideAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemVali
         lightsOut.toggle()
         UserDefaults.standard.set(lightsOut, forKey: "Pondside.lightsOut")
         controllers.forEach { $0.lightsOut = lightsOut }
+        lightsOutItem?.state = lightsOut ? .on : .off
     }
 
     @objc func showAbout(_ sender: Any?) {
@@ -130,16 +132,31 @@ final class PondsideAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemVali
         ])
     }
 
-    func validateMenuItem(_ item: NSMenuItem) -> Bool {
-        if item.action == #selector(toggleLightsOut(_:)) { item.state = lightsOut ? .on : .off }
-        return true
+    func validateMenuItem(_ item: NSMenuItem) -> Bool { true }
+
+    /// The menu item's checkmark follows the setting wherever it changes.
+    private weak var lightsOutItem: NSMenuItem?
+
+    // MARK: Commands
+
+    /// Commands that need no window.
+    func runAppCommand(_ id: CommandID) {
+        switch id.rawValue {
+        case "file.new": newDocument(nil)
+        case "file.open": openDocument(nil)
+        case "view.lightsOut": toggleLightsOut(nil)
+        case "help.about": showAbout(nil)
+        default: NSSound.beep()
+        }
     }
 
     // MARK: Menu
 
-    /// Every command has a key equivalent; the chord system arrives in M3.
+    /// Menus are built from the command catalog, so titles and shortcuts
+    /// match the palette, the hints and the keyboard audit exactly.
     private func buildMenu() -> NSMenu {
         let main = NSMenu()
+        let center = CommandCenter.shared
 
         func submenu(_ title: String, _ items: [NSMenuItem]) {
             let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
@@ -153,9 +170,14 @@ final class PondsideAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemVali
             i.keyEquivalentModifierMask = mods
             return i
         }
+        func command(_ id: CommandID) -> NSMenuItem { center.menuItem(id) }
+        func commands(category: String) -> [NSMenuItem] {
+            center.keymap.specs.filter { $0.category == category && ($0.shortcut != nil || !$0.chords.isEmpty) }
+                .map { center.menuItem($0.id) }
+        }
 
         submenu("Pondside", [
-            item("About Pondside", #selector(showAbout(_:)), ""),
+            command("help.about"),
             .separator(),
             item("Hide Pondside", #selector(NSApplication.hide(_:)), "h"),
             item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option]),
@@ -164,43 +186,52 @@ final class PondsideAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemVali
             item("Quit Pondside", #selector(NSApplication.terminate(_:)), "q"),
         ])
         submenu("File", [
-            item("New Score…", #selector(newDocument(_:)), "n"),
-            item("Open…", #selector(openDocument(_:)), "o"),
+            command("file.new"),
+            command("file.open"),
             .separator(),
-            item("Export PDF…", #selector(DocumentWindowController.exportPDF(_:)), "e"),
-            item("Reveal in Finder", #selector(DocumentWindowController.revealInFinder(_:)), "r", [.command, .option]),
+            command("file.exportPDF"),
+            command("file.reveal"),
             .separator(),
-            item("Close", #selector(NSWindow.performClose(_:)), "w"),
+            center.menuItem("file.close", action: #selector(NSWindow.performClose(_:))),
         ])
         submenu("Edit", [
-            item("Undo", Selector(("undo:")), "z"),
-            item("Redo", Selector(("redo:")), "z", [.command, .shift]),
+            center.menuItem("edit.undo", action: Selector(("undo:"))),
+            center.menuItem("edit.redo", action: Selector(("redo:"))),
             .separator(),
             item("Cut", #selector(NSText.cut(_:)), "x"),
             item("Copy", #selector(NSText.copy(_:)), "c"),
             item("Paste", #selector(NSText.paste(_:)), "v"),
-            item("Select All", #selector(NSText.selectAll(_:)), "a"),
+            center.menuItem("edit.selectAll", action: #selector(NSText.selectAll(_:))),
             .separator(),
-            item("Find…", #selector(NSTextView.performFindPanelAction(_:)), "f").tagged(Int(NSFindPanelAction.showFindPanel.rawValue)),
+            center.menuItem("edit.find", action: #selector(NSTextView.performFindPanelAction(_:)))
+                .tagged(Int(NSFindPanelAction.showFindPanel.rawValue)),
+            .separator(),
+            command("edit.delete"),
+            command("edit.source"),
         ])
-        submenu("View", [
-            item("Switch Pane", #selector(DocumentWindowController.switchPane(_:)), "j"),
-            item("Next File", #selector(DocumentWindowController.nextFile(_:)), "]", [.command, .shift]),
-            item("Previous File", #selector(DocumentWindowController.previousFile(_:)), "[", [.command, .shift]),
-            .separator(),
-            item("Zoom In", #selector(DocumentWindowController.zoomIn(_:)), "="),
-            item("Zoom Out", #selector(DocumentWindowController.zoomOut(_:)), "-"),
-            item("Actual Size", #selector(DocumentWindowController.actualSize(_:)), "0", [.command, .option]),
-            item("Fit Width", #selector(DocumentWindowController.zoomToFitWidth(_:)), "0"),
-            .separator(),
-            item("Lights Out (display only)", #selector(toggleLightsOut(_:)), "l", [.command, .shift]),
-            item("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control]),
-        ])
+        submenu("Go", commands(category: "Go"))
+        submenu("Add", commands(category: "Add"))
+        var view = commands(category: "View").filter { $0.commandID != "view.fullScreen" }
+        view += [.separator()] + commands(category: "Pane")
+        view += [.separator(), center.menuItem("view.fullScreen", action: #selector(NSWindow.toggleFullScreen(_:)))]
+        lightsOutItem = view.first { $0.commandID == "view.lightsOut" }
+        lightsOutItem?.state = lightsOut ? .on : .off
+        submenu("View", view)
         submenu("Window", [
             item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),
             item("Zoom", #selector(NSWindow.performZoom(_:)), ""),
-        ])
+            .separator(),
+        ] + commands(category: "Workspace"))
+        submenu("Help", [command("help.palette"), command("help.context"), command("help.keys")])
         return main
+    }
+}
+
+extension PondsideAppDelegate: CommandResponder {
+    /// Reached when no window handles a command (e.g. none is open).
+    @objc func performCommand(_ sender: Any?) {
+        guard let id = (sender as? NSMenuItem)?.commandID else { return }
+        runAppCommand(id)
     }
 }
 

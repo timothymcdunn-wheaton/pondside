@@ -13,7 +13,8 @@ The full plan, the schemas, and the parts of the brief I'd change are in
 
 ## Status
 
-**M1 (the loop) and M2 (editing) are done; M2.1 (multi-file scores) is in.**
+**M1 (the loop) and M2 (editing) are done; M2.1 (multi-file scores), mouse entry and M3 (the interface) are in.**
+The M3 interface code has not yet been compiled on macOS: CI's macOS runners were stuck in the queue when it landed.
 
 - **Open and engrave.** Open a `.ly` file. It is engraved by the LilyPond
   you already have, detected on `PATH`, Homebrew, MacPorts or
@@ -32,6 +33,22 @@ The full plan, the schemas, and the parts of the brief I'd change are in
 - **Never lose work.** Edits autosave after 250 ms and re-engrave. If
   another tool writes a file, the change is merged as a minimal diff so
   your caret stays put.
+- **Mouse entry.** Arm a duration (type `8` with nothing selected), then
+  click a staff: a ghost notehead shows where the note will go. The clef is
+  read from the notes already on that staff.
+- **Two keys to everything.** Press Space in the score (⌥Space anywhere)
+  and the hint bar lists what can follow: `g` go, `a` add, `e` edit, `v`
+  view, `p` pane, `w` workspace, `f` file, `h` help. `␣ a s` slurs the
+  selection, `␣ g e` jumps to the next error, `␣ ␣` opens the palette.
+  `⌘K` is the fuzzy palette (every row shows its keys), `⌘/` lists what
+  you can do right now, and holding `⌥` shows the keys on the controls.
+  Remap anything in `~/Library/Application Support/Pondside/keymap.txt`
+  (`go.error = x`). A test fails the build if any command lacks a key or
+  two chords collide.
+- **Panes are frames, content is cargo.** `⌃⇥` cycles the focused pane
+  through score, source, compiler output and a terminal, and `⌃1`…`⌃0`
+  jump straight to one. The frames never move. `⌘1`…`⌘5` switch layouts,
+  `⌘⇧S` saves a workspace, and `␣ w o` opens one.
 - **Export.** `⌘E` exports a PDF with point-and-click disabled, then checks
   the output for local filesystem paths.
 
@@ -51,7 +68,9 @@ Keys are LilyPond wherever LilyPond has an answer.
 | `-.` `->` `^-` `_1` … | articulations and fingerings, exactly as typed in LilyPond |
 | `\trill` `⏎` | any post-event command, typed as in LilyPond |
 | `⌫` | delete |
-| `⎋` | cancel / deselect |
+| `⎋` | cancel / deselect / disarm |
+| click a staff | with a duration armed: place a note there |
+| `Space` | leader: chords such as `␣ a s` (slur), `␣ g e` (next error), `␣ ␣` (palette) |
 | `⏎` | edit in source |
 | `⌘J` | switch between score and source |
 | `⌘⇧]` `⌘⇧[` | next / previous file |

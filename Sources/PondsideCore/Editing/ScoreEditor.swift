@@ -204,6 +204,66 @@ public struct ScoreEditor: Sendable {
         return ScoreEdit(name: "Toggle \(text)", edits: edits, selectionAnchors: anchorsAfter(edits, events: eventIndices))
     }
 
+    /// A spanner over the selection: `open` after its first event and
+    /// `close` after its last (slur `( )`, beam `[ ]`, hairpin `\< \!`).
+    /// When both ends are already there, removes them.
+    public func toggleSpan(open: String, close: String, events eventIndices: [Int], name: String) -> ScoreEdit? {
+        let sorted = Array(Set(eventIndices)).sorted()
+        guard let first = sorted.first, let last = sorted.last else { return nil }
+        func existing(_ text: String, on e: Int) -> Range<Int>? {
+            events[e].postEvents.first { tree.string($0) == text }
+        }
+        func removal(_ r: Range<Int>) -> TextEdit {
+            let joins = isWordByte(at: r.lowerBound - 1) && isWordByte(at: r.upperBound)
+            return TextEdit(r, joins ? " " : "")
+        }
+        func addition(_ text: String, after e: Int) -> TextEdit {
+            let at = events[e].range.upperBound
+            let separate = isWordByte(text.utf8.last) && isWordByte(at: at)
+            return .insert(separate ? text + " " : text, at: at)
+        }
+        var edits: [TextEdit] = []
+        if first == last {
+            // One note: the opening half alone (a hairpin to the next dynamic).
+            edits.append(existing(open, on: first).map(removal) ?? addition(open, after: first))
+        } else if let o = existing(open, on: first), let c = existing(close, on: last) {
+            edits += [removal(o), removal(c)]
+        } else {
+            if existing(open, on: first) == nil { edits.append(addition(open, after: first)) }
+            if existing(close, on: last) == nil { edits.append(addition(close, after: last)) }
+        }
+        guard !edits.isEmpty else { return nil }
+        return ScoreEdit(name: name, edits: edits, selectionAnchors: anchorsAfter(edits, events: sorted))
+    }
+
+    /// Wraps the selected events in `\tuplet n/d { … }`. Refused when the
+    /// selection crosses a brace or `<< >>` boundary, or holds the operand
+    /// of `\relative`-style commands, since wrapping would change the music.
+    public func wrapTuplet(events eventIndices: [Int], numerator: Int = 3, denominator: Int = 2) -> ScoreEdit? {
+        guard let first = eventIndices.min(), let last = eventIndices.max() else { return nil }
+        let span = events[first].range.lowerBound..<events[last].range.upperBound
+        if events[first...last].contains(where: \.isScopeOperand) { return nil }
+        var depth = 0
+        var balanced = true
+        tree.root.forEachLeaf { leaf in
+            guard balanced, leaf.range.lowerBound >= span.lowerBound, leaf.range.upperBound <= span.upperBound else { return }
+            switch leaf.kind {
+            case .openBrace, .openSimultaneous, .embeddedOpen: depth += 1
+            case .closeBrace, .closeSimultaneous, .embeddedClose:
+                depth -= 1
+                if depth < 0 { balanced = false }
+            default: break
+            }
+        }
+        guard balanced, depth == 0 else { return nil }
+        let edits: [TextEdit] = [
+            .insert("\\tuplet \(numerator)/\(denominator) { ", at: span.lowerBound),
+            .insert(" }", at: span.upperBound),
+        ]
+        return ScoreEdit(name: "Tuplet", edits: edits,
+                         selectionAnchors: [mapped(span.lowerBound, through: edits, insertionAt: span.lowerBound) + edits[0].replacement.utf8.count])
+    }
+
     // MARK: Insert and delete
 
     /// Inserts a note (step 0…6, or nil for a rest) after `event`, choosing

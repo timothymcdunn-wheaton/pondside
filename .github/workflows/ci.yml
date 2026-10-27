@@ -4,6 +4,11 @@ on:
   push:
   pull_request:
 
+# A new push supersedes the previous run on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # The portability seam: every module below PondsideUI builds and passes its
   # full test suite on Linux. A platform leak below the seam fails here.

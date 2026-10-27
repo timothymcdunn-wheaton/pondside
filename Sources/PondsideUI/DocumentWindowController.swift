@@ -12,7 +12,12 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     private let editor = SourceEditorView(frame: .zero)
     private let canvas = ScoreCanvasView(frame: .zero)
     private let canvasScroll = NSScrollView()
-    private let split = NSSplitView()
+    private let editorPane = NSView()
+    private let compilerOutput = CompilerOutputView(frame: .zero)
+    private var panes: PaneHost!
+    private var help: HelpOverlay!
+    private var chord = ChordRecognizer()
+    private var keyMonitor: Any?
     private let statusBar = StatusBarView(frame: .zero)
 
     private var noteInput = NoteInput()
@@ -47,6 +52,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
         window.delegate = self
         buildLayout()
         wire()
+        installKeyMonitor()
         showFile(activeFile)
         score.delegate = self
         score.open()
@@ -72,7 +78,6 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
         canvasScroll.contentView.postsBoundsChangedNotifications = true
 
         // The source pane: a one-line file bar over the editor.
-        let editorPane = NSView()
         let fileBar = NSView()
         fileBar.wantsLayer = true
         fileBar.layer?.backgroundColor = Theme.chrome.cgColor
@@ -101,12 +106,13 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
             editor.bottomAnchor.constraint(equalTo: editorPane.bottomAnchor),
         ])
 
-        split.isVertical = true
-        split.dividerStyle = .thin
-        split.addArrangedSubview(editorPane)
-        split.addArrangedSubview(canvasScroll)
-        split.setHoldingPriority(.defaultLow + 1, forSubviewAt: 0)
+        // Panes are frames, content is cargo (DESIGN.md, M3).
+        panes = PaneHost(layout: Self.savedLayout()) { [unowned self] content in self.makeContent(content) }
+        let split = panes.split
         split.translatesAutoresizingMaskIntoConstraints = false
+        help = HelpOverlay(window: window!)
+        help.register(fileMenu, "go.file")
+        help.register(statusBar, "help.context")
 
         statusBar.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(split)
@@ -123,11 +129,9 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
             statusBar.trailingAnchor.constraint(equalTo: content.trailingAnchor),
             statusBar.bottomAnchor.constraint(equalTo: content.bottomAnchor),
             statusBar.heightAnchor.constraint(equalToConstant: 26),
-            editorPane.widthAnchor.constraint(greaterThanOrEqualToConstant: 280),
-            canvasScroll.widthAnchor.constraint(greaterThanOrEqualToConstant: 320),
         ])
         content.layoutSubtreeIfNeeded()
-        split.setPosition((content.bounds.width * 0.4).rounded(), ofDividerAt: 0)
+        panes.applyFractions()
     }
 
     private func wire() {
@@ -496,14 +500,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     @objc func zoomToFitWidth(_ sender: Any?) { canvas.fitWidth() }
     @objc func actualSize(_ sender: Any?) { canvas.setZoom(1) }
 
-    @objc func switchPane(_ sender: Any?) {
-        guard let window else { return }
-        if window.firstResponder === editor.textView {
-            window.makeFirstResponder(canvas)
-        } else {
-            window.makeFirstResponder(editor.textView)
-        }
-    }
+    @objc func switchPane(_ sender: Any?) { run("pane.focusNext") }
 
     @objc func exportPDF(_ sender: Any?) {
         guard let window else { return }
@@ -535,6 +532,9 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     // MARK: NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
+        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        keyMonitor = nil
+        saveLayout()
         score.close()
         (NSApp.delegate as? PondsideAppDelegate)?.windowDidClose(self)
     }
@@ -689,9 +689,392 @@ extension DocumentWindowController: ScoreDocumentDelegate {
         let first = canvas.pages.isEmpty
         canvas.setPages(score.pages)
         if first { canvas.fitWidth() }
+        compilerOutput.show(score.lastLog)
         rebuildEngravingMap()
         refreshHighlight(reveal: false)
         showDiagnostics()
         updateStatus()
+    }
+}
+
+// MARK: - Commands, chords, palette and panes (M3)
+
+/// A reference cell for palette providers, which recompute their rows on
+/// each keystroke and must hand the chosen one back.
+@MainActor
+private final class Box<T> {
+    var value: T
+    init(_ value: T) { self.value = value }
+}
+
+extension DocumentWindowController: CommandResponder {
+    @objc func performCommand(_ sender: Any?) {
+        guard let id = (sender as? NSMenuItem)?.commandID else { return }
+        run(id)
+    }
+
+    var commandContext: CommandContext {
+        let responder = window?.firstResponder
+        let focus: CommandContext.Focus = responder === canvas ? .score : responder === editor.textView ? .source : .other
+        var errors = false
+        if case .errors = score.status { errors = true }
+        return CommandContext(focus: focus, hasSelection: hasSelection, durationArmed: noteInput.armedDuration != nil,
+                              hasErrors: errors, fileCount: score.files.count)
+    }
+
+    /// Runs a catalog command. Menus, chords and the palette all end here.
+    func run(_ id: CommandID) {
+        let center = CommandCenter.shared
+        if let spec = center.spec(id), !spec.isAvailable(in: commandContext) {
+            statusBar.flash(Self.unavailableMessage(spec))
+            NSSound.beep()
+            return
+        }
+        center.palette.noteUsed(id)
+        let selected = targets().events
+        let pitched = selected.filter { tree.events[$0].isPitched }
+        let editor = ScoreEditor(tree)
+        switch id.rawValue {
+        case "file.exportPDF": exportPDF(nil)
+        case "file.reveal": revealInFinder(nil)
+        case "file.close": window?.performClose(nil)
+
+        case "go.file": showFilePicker()
+        case "go.nextFile": nextFile(nil)
+        case "go.previousFile": previousFile(nil)
+        case "go.error": goToError()
+        case "go.first":
+            if let i = tree.events.firstIndex(where: { $0.acceptsNoteEntry }) { selectEvents([i]) }
+        case "go.last":
+            if let i = tree.events.lastIndex(where: { $0.acceptsNoteEntry }) { selectEvents([i]) }
+        case "go.next": perform(.select(step: 1, extend: false))
+        case "go.previous": perform(.select(step: -1, extend: false))
+
+        case "add.slur": apply(editor.toggleSpan(open: "(", close: ")", events: pitched, name: "Slur"))
+        case "add.beam": apply(editor.toggleSpan(open: "[", close: "]", events: pitched, name: "Beam"))
+        case "add.crescendo": apply(editor.toggleSpan(open: "\\<", close: "\\!", events: selected, name: "Crescendo"))
+        case "add.decrescendo": apply(editor.toggleSpan(open: "\\>", close: "\\!", events: selected, name: "Decrescendo"))
+        case "add.tie": apply(editor.togglePostEvent("~", events: pitched))
+        case "add.staccato": apply(editor.togglePostEvent("-.", events: pitched))
+        case "add.accent": apply(editor.togglePostEvent("->", events: pitched))
+        case "add.tenuto": apply(editor.togglePostEvent("--", events: pitched))
+        case "add.fermata": apply(editor.togglePostEvent("\\fermata", events: selected))
+        case "add.dynamic": showDynamicPicker(events: selected)
+        case "add.tuplet":
+            guard let edit = editor.wrapTuplet(events: selected) else {
+                statusBar.flash("A tuplet needs a selection inside one { } block")
+                NSSound.beep()
+                return
+            }
+            apply(edit)
+        case "add.note": statusBar.flash("Type a–g with the score focused: the note goes after the selection")
+        case "add.rest": insert(step: nil)
+        case "add.mouse": statusBar.flash("Type a duration (4, 8, 16…) with nothing selected, then click a staff")
+
+        case "edit.undo": activeFile.undoManager.undo()
+        case "edit.redo": activeFile.undoManager.redo()
+        case "edit.delete": perform(.delete)
+        case "edit.source": perform(.editSource)
+        case "edit.find":
+            let item = NSMenuItem()
+            item.tag = Int(NSFindPanelAction.showFindPanel.rawValue)
+            window?.makeFirstResponder(self.editor.textView)
+            self.editor.textView.performFindPanelAction(item)
+        case "edit.selectAll": NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: self)
+        case "edit.up": perform(.move(.step(1)))
+        case "edit.down": perform(.move(.step(-1)))
+        case "edit.duration": statusBar.flash("Type 1 2 4 8 16 32 in the score: it changes the selection, or arms the next note")
+        case "edit.dot": perform(.toggleDot)
+        case "edit.disarm":
+            noteInput.arm(nil)
+            updateInputStatus()
+
+        case "view.zoomIn": zoomIn(nil)
+        case "view.zoomOut": zoomOut(nil)
+        case "view.actualSize": actualSize(nil)
+        case "view.fitWidth": zoomToFitWidth(nil)
+        case "view.fullScreen": window?.toggleFullScreen(nil)
+
+        case "pane.focusNext":
+            syncFocusedPane()
+            var l = panes.layout
+            l.focusNext()
+            focusPane(l.focused)
+        case "pane.cycleNext": cyclePane(forward: true)
+        case "pane.cyclePrevious": cyclePane(forward: false)
+        case "workspace.save": saveWorkspace()
+        case "workspace.open": showWorkspacePicker()
+
+        case "help.palette": showCommandPalette(onlyAvailable: false, placeholder: "Type a command — two letters are usually enough")
+        case "help.context": showCommandPalette(onlyAvailable: true, placeholder: "What can I do here?")
+        case "help.keys": showCommandPalette(onlyAvailable: false, placeholder: "Every command and its keys")
+
+        default:
+            let raw = id.rawValue
+            if raw.hasPrefix("pane.show."), let c = PaneContent(rawValue: String(raw.dropFirst("pane.show.".count))) {
+                showInFocusedPane(c)
+            } else if raw.hasPrefix("workspace.preset"), let n = Int(raw.dropFirst("workspace.preset".count)),
+                      PaneLayout.presets.indices.contains(n - 1) {
+                applyLayout(PaneLayout.presets[n - 1])
+            } else {
+                (NSApp.delegate as? PondsideAppDelegate)?.runAppCommand(id)
+            }
+        }
+    }
+
+    private static func unavailableMessage(_ spec: CommandSpec) -> String {
+        switch spec.requires {
+        case .selection: return "\(spec.title) needs a selection: click a note, or walk with ←→"
+        case .errors: return "No errors: the score compiles cleanly"
+        case .severalFiles: return "This score is a single file"
+        case .scoreFocus: return "\(spec.title) works in the score: ⌘J to focus it"
+        case .always: return spec.title
+        }
+    }
+
+    // MARK: Leader chords
+
+    private func installKeyMonitor() {
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
+            let consumed = MainActor.assumeIsolated { self?.intercept(event) ?? false }
+            return consumed ? nil : event
+        }
+    }
+
+    /// Window-wide keys: the leader (Space in the score, ⌥Space anywhere —
+    /// ⌃Space belongs to macOS input-source switching),
+    /// the keys of a chord in progress, and ⌥ for the key reveal.
+    private func intercept(_ event: NSEvent) -> Bool {
+        guard let window, event.window === window else { return false }
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if event.type == .flagsChanged {
+            help.optionChanged(isDown: flags == .option)
+            return false
+        }
+        help.optionChanged(isDown: false)
+        let keymap = CommandCenter.shared.keymap
+        if chord.isActive {
+            if event.keyCode == 53 {
+                chord.cancel()
+                statusBar.endChord()
+                return true
+            }
+            guard let c = event.characters?.first else { return true }
+            handle(chord.feed(c, keymap))
+            return true
+        }
+        let isSpace = event.keyCode == 49
+        let leader = isSpace && (flags == .option || (flags.isEmpty && window.firstResponder === canvas && !noteInput.isBuffering))
+        guard leader else { return false }
+        handle(chord.begin(keymap))
+        return true
+    }
+
+    private func handle(_ outcome: ChordRecognizer.Outcome) {
+        switch outcome {
+        case .pending(let next):
+            let typed = (["␣"] + (chord.typed ?? []).map { String($0) }).joined(separator: " ")
+            statusBar.showChord(typed: typed, continuations: next)
+        case .command(let id):
+            statusBar.endChord()
+            run(id)
+        case .unbound(let keys):
+            statusBar.endChord()
+            statusBar.flash("\(keys) isn't bound. ⌘K finds any command")
+            NSSound.beep()
+        }
+    }
+
+    // MARK: Palette
+
+    private func showCommandPalette(onlyAvailable: Bool, placeholder: String) {
+        guard let window else { return }
+        let context = commandContext
+        let items = Box<[CommandPalette.Item]>([])
+        let panel = PalettePanel(placeholder: placeholder, provider: { query in
+            items.value = CommandCenter.shared.palette.items(for: query, in: context, onlyAvailable: onlyAvailable)
+            return items.value.map {
+                PaletteRow(title: $0.spec.title, detail: $0.spec.gloss, hint: $0.hint, enabled: $0.available, matched: $0.matched)
+            }
+        }, onChoose: { [weak self] i in
+            guard items.value.indices.contains(i) else { return }
+            self?.run(items.value[i].spec.id)
+        })
+        panel.present(over: window)
+    }
+
+    /// A palette over plain choices, fuzzy-matched by title.
+    private func showPicker(placeholder: String, choices: [(title: String, detail: String?)], choose: @escaping (Int) -> Void) {
+        guard let window else { return }
+        let order = Box<[Int]>([])
+        let panel = PalettePanel(placeholder: placeholder, provider: { query in
+            let scored = choices.enumerated().compactMap { i, c -> (Int, FuzzyMatch.Result)? in
+                FuzzyMatch.match(query, in: c.title).map { (i, $0) }
+            }.sorted { $0.1.score > $1.1.score || ($0.1.score == $1.1.score && $0.0 < $1.0) }
+            order.value = scored.map(\.0)
+            return scored.map { PaletteRow(title: choices[$0.0].title, detail: choices[$0.0].detail, matched: $0.1.positions) }
+        }, onChoose: { i in
+            guard order.value.indices.contains(i) else { return }
+            choose(order.value[i])
+        })
+        panel.present(over: window)
+    }
+
+    private func showFilePicker() {
+        let rootDir = score.url.deletingLastPathComponent().path + "/"
+        let files = score.files
+        showPicker(placeholder: "Go to file", choices: files.map { f in
+            let path = f.url.path.hasPrefix(rootDir) ? String(f.url.path.dropFirst(rootDir.count)) : f.url.path
+            return (title: f.displayName, detail: (f.hasNotes ? path : path + " · no notes") as String?)
+        }) { [weak self] i in
+            guard let self, files.indices.contains(i) else { return }
+            self.showFile(files[i])
+        }
+    }
+
+    private static let dynamics = ["ppp", "pp", "p", "mp", "mf", "f", "ff", "fff", "fp", "sf", "sfz", "rfz"]
+
+    private func showDynamicPicker(events: [Int]) {
+        showPicker(placeholder: "Dynamic", choices: Self.dynamics.map { (title: "\\" + $0, detail: nil as String?) }) { [weak self] i in
+            guard let self else { return }
+            self.apply(ScoreEditor(self.tree).togglePostEvent("\\" + Self.dynamics[i], events: events))
+        }
+    }
+
+    private func goToError() {
+        let errors = score.files.flatMap { f in
+            f.diagnostics.filter { $0.severity == .error || $0.severity == .fatal }.map { (file: f, diagnostic: $0) }
+        }
+        guard !errors.isEmpty else { return }
+        let caret = editor.textView.selectedRange().location
+        // The next error after the caret in this file, else the first elsewhere.
+        let here = errors.filter { $0.file === activeFile }
+            .compactMap { e in Self.location(of: e.diagnostic, in: e.file).map { (e, $0) } }
+            .sorted { $0.1 < $1.1 }
+        let target = here.first { $0.1 > caret }?.0 ?? errors.first { $0.file !== activeFile } ?? here.first?.0 ?? errors[0]
+        if target.file !== activeFile { showFile(target.file) }
+        guard let loc = Self.location(of: target.diagnostic, in: target.file) else { return }
+        window?.makeFirstResponder(editor.textView)
+        editor.select(NSRange(location: loc, length: 0))
+        statusBar.flash(target.diagnostic.message)
+    }
+
+    /// Where a diagnostic points in the file's current text (UTF-16).
+    private static func location(of d: Diagnostic, in f: SourceFile) -> Int? {
+        let engraved = f.compiledText ?? f.text
+        let source = SourceText(engraved)
+        guard let p = d.position(in: source), let i = source.index(of: p) else { return nil }
+        return EngravingMap(engraved: engraved, current: f.text).currentOffset(forEngraved: source.utf16Offset(of: i))
+    }
+
+    // MARK: Panes
+
+    private static let layoutKey = "Pondside.layout"
+    private static let workspacesKey = "Pondside.workspaces"
+    /// Content that exists today; the rest shows a placeholder naming its milestone.
+    private static let builtContent: [PaneContent] = [.score, .lilypond, .compilerOutput, .terminal]
+
+    private static func savedLayout() -> PaneLayout {
+        if let data = UserDefaults.standard.data(forKey: layoutKey),
+           let layout = try? JSONDecoder().decode(PaneLayout.self, from: data), !layout.contents.isEmpty {
+            return layout
+        }
+        return PaneLayout.presets[0]
+    }
+
+    private func saveLayout() {
+        panes.captureFractions()
+        if let data = try? JSONEncoder().encode(panes.layout) { UserDefaults.standard.set(data, forKey: Self.layoutKey) }
+    }
+
+    private func makeContent(_ content: PaneContent) -> NSView {
+        switch content {
+        case .score: return canvasScroll
+        case .lilypond: return editorPane
+        case .compilerOutput:
+            compilerOutput.show(score.lastLog)
+            return compilerOutput
+        case .terminal: return TerminalPane(directory: score.url.deletingLastPathComponent())
+        default: return PanePlaceholder(content)
+        }
+    }
+
+    private func responder(for content: PaneContent) -> NSView {
+        switch content {
+        case .score: return canvas
+        case .lilypond: return editor.textView
+        case .terminal: return (panes.view(for: .terminal) as? TerminalPane)?.responder ?? panes.view(for: .terminal)
+        default: return panes.view(for: content)
+        }
+    }
+
+    private func syncFocusedPane() {
+        if let i = panes.paneIndex(containing: window?.firstResponder as? NSView) { panes.setFocused(i) }
+    }
+
+    private func focusPane(_ i: Int) {
+        panes.setFocused(i)
+        if let c = panes.layout.focusedContent { window?.makeFirstResponder(responder(for: c)) }
+    }
+
+    private func applyLayout(_ layout: PaneLayout) {
+        panes.apply(layout)
+        focusPane(layout.focused)
+        saveLayout()
+    }
+
+    private func cyclePane(forward: Bool) {
+        syncFocusedPane()
+        var l = panes.layout
+        l.cycle(forward: forward, available: Self.builtContent)
+        applyLayout(l)
+        if let c = l.focusedContent { statusBar.flash("\(c.title) · ⌃⇥ next, ⌃1–⌃0 jump") }
+    }
+
+    private func showInFocusedPane(_ content: PaneContent) {
+        syncFocusedPane()
+        var l = panes.layout
+        l.show(content)
+        applyLayout(l)
+    }
+
+    private func loadWorkspaces() -> Workspaces {
+        guard let data = UserDefaults.standard.data(forKey: Self.workspacesKey),
+              let w = try? JSONDecoder().decode(Workspaces.self, from: data) else { return Workspaces() }
+        return w
+    }
+
+    private func saveWorkspace() {
+        guard let window else { return }
+        let alert = NSAlert()
+        alert.messageText = "Save Workspace"
+        alert.informativeText = "Name this arrangement of panes. Open it again with ␣ w o."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.placeholderString = "Orchestration"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .alertFirstButtonReturn else { return }
+            let name = field.stringValue.trimmingCharacters(in: .whitespaces)
+            guard !name.isEmpty else { return }
+            self.panes.captureFractions()
+            var w = self.loadWorkspaces()
+            w.save(self.panes.layout, as: name)
+            if let data = try? JSONEncoder().encode(w) { UserDefaults.standard.set(data, forKey: Self.workspacesKey) }
+            self.statusBar.flash("Saved workspace “\(name)”")
+        }
+    }
+
+    private func showWorkspacePicker() {
+        let saved = loadWorkspaces().saved
+        let all = PaneLayout.presets + saved
+        showPicker(placeholder: "Open workspace", choices: all.map { l in
+            (title: l.name, detail: l.contents.map(\.title).joined(separator: " · ") as String?)
+        }) { [weak self] i in
+            guard all.indices.contains(i) else { return }
+            self?.applyLayout(all[i])
+        }
     }
 }

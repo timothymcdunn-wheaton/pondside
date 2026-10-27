@@ -127,6 +127,8 @@ public enum CommandCatalog {
                                      "Switch to the \(preset.name.lowercased()) layout", category: "Workspace",
                                      chords: [Chord("w\(i + 1)")], shortcut: KeyStroke("\(i + 1)", .command)))
         }
+        specs.append(CommandSpec("workspace.open", "Open Workspace…", "Switch to an arrangement you saved",
+                                 category: "Workspace", chords: ["wo"]))
         specs.append(CommandSpec("workspace.save", "Save Workspace…", "Save this arrangement of panes under a name",
                                  category: "Workspace", chords: ["ws"], shortcut: KeyStroke("s", [.command, .shift])))
         return specs

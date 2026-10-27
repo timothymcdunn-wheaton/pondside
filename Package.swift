@@ -14,6 +14,9 @@ var products: [Product] = [
     .library(name: "PondsideBridge", targets: ["PondsideBridge"]),
 ]
 
+// External packages are UI-only: the portable modules depend on nothing.
+var dependencies: [Package.Dependency] = []
+
 var targets: [Target] = [
     // Portable — no AppKit, no SwiftUI, no Apple-only Foundation.
     .target(name: "PondsideCore"),
@@ -32,8 +35,10 @@ var targets: [Target] = [
 // ─────────────────────────── seam ───────────────────────────
 // macOS only. Treated as disposable: a port replaces these two targets.
 products.append(.executable(name: "PondsideApp", targets: ["PondsideApp"]))
+dependencies.append(.package(url: "https://github.com/migueldeicaza/SwiftTerm", .upToNextMinor(from: "1.5.1")))
 targets += [
-    .target(name: "PondsideUI", dependencies: ["PondsideCore", "PondsideEngrave"]),
+    .target(name: "PondsideUI", dependencies: ["PondsideCore", "PondsideEngrave",
+                                               .product(name: "SwiftTerm", package: "SwiftTerm")]),
     .executableTarget(name: "PondsideApp", dependencies: ["PondsideUI"]),
 ]
 #endif
@@ -42,5 +47,6 @@ let package = Package(
     name: "Pondside",
     platforms: [.macOS(.v14)],
     products: products,
+    dependencies: dependencies,
     targets: targets
 )
