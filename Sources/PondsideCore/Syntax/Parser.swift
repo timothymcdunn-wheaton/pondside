@@ -142,6 +142,14 @@ struct Parser {
         return s
     }
 
+    /// A note or rest glued to a duration (`r8.`, `c4`): music, even where a
+    /// markup argument might otherwise be expected.
+    private func isMusicWord(_ t: Token, mode: LexMode) -> Bool {
+        guard mode == .notes, Lexer.isDigit(at(t.end)) else { return false }
+        let word = text(t.start, t.end)
+        return word == "r" || word == "R" || word == "s" || language.parse(word) != nil
+    }
+
     private func isMusicMode(_ mode: LexMode) -> Bool {
         mode == .notes || mode == .chords || mode == .drums
     }
@@ -364,9 +372,7 @@ struct Parser {
             st.inlineMarkup = false
             // `\markup \filled-box #… #0 r8.`: a note or rest glued to a
             // duration is music, not the markup's text.
-            let isMusic = mode == .notes && Lexer.isDigit(at(t.end))
-                && (word == "r" || word == "R" || word == "s" || language.parse(word) != nil)
-            if !isMusic { return consume(t, as: .markupWord) }
+            if !isMusicWord(t, mode: mode) { return consume(t, as: .markupWord) }
         }
         if st.expectPath {
             st.expectPath = false
@@ -812,6 +818,8 @@ struct Parser {
         st.inlineMarkup = true
         while st.inlineMarkup, let t = lex(mode) {
             if t.kind == .closeBrace || t.kind == .closeSimultaneous || t.kind == .embeddedClose || t.kind == .closeChord { break }
+            // The markup has ended; the music after it is not part of this post-event.
+            if t.kind == .word, isMusicWord(t, mode: mode) { break }
             let before = pos
             out += parseItem(t, mode: mode, context: .markup)
             if pos == before { break }
