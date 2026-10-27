@@ -81,7 +81,7 @@ final class ScoreEditorTests: XCTestCase {
     func testInsertInRelativeMode() {
         let src = "\\relative c' { c4 e f }"
         // Insert g after e: nearest g to e is above; f must stay where it was.
-        let out = applying(src, at: "e") { $0.insert(step: 4, after: $1, duration: nil) }!
+        let out = applying(src, at: "e f") { $0.insert(step: 4, after: $1, duration: nil) }!
         XCTAssertEqual(out, "\\relative c' { c4 e g f }")
         XCTAssertEqual(pitches(out), ["0:0:1", "2:0:1", "4:0:1", "3:0:1"])
         // Inserting b changes f's reference enough to need a mark.
@@ -101,6 +101,20 @@ final class ScoreEditorTests: XCTestCase {
         XCTAssertEqual(pitches(out), ["0:0:1", "0:0:1", "1:0:1"])
         XCTAssertEqual(durations(out), ["4", "8", "8"])
         XCTAssertEqual(out, "\\relative c' { c4 c8 d }")
+    }
+
+    func testInsertionsNeverFuseTokens() {
+        XCTAssertEqual(applying("{ e'8( d') }", at: "e'8(") { $0.insert(step: 4, after: $1, duration: nil) }, "{ e'8( g' d') }")
+        XCTAssertEqual(applying("{ e'8(d') }", at: "e'8(") { $0.insert(step: 4, after: $1, duration: nil) }, "{ e'8( g' d') }")
+        XCTAssertEqual(applying("{ e'8(d') }", at: "e'8(") { $0.togglePostEvent("\\fermata", events: [$1]) }, "{ e'8(\\fermata d') }")
+        XCTAssertEqual(applying("{ c'4~8 }", at: "c'4~") { $0.togglePostEvent("~", events: [$1]) }, "{ c'4 8 }")
+    }
+
+    func testBareDurationsAreEvents() {
+        let tree = SyntaxTree("{ c'4 d' 8 e'2 f' ~ 8 g'16 4 c'4~8 \\time 3/4 }")
+        XCTAssertEqual(tree.events.map { tree.string($0.range) }, ["c'4", "d' 8", "e'2", "f' ~", "8", "g'16", "4", "c'4~", "8"])
+        XCTAssertEqual(tree.events.map(\.kind).filter { $0 == .repeatedPitch }.count, 3)
+        XCTAssertEqual(durations("{ c'4 d' 8 e'2 f' ~ 8 g'16 4 }"), ["4", "8", "2", "2", "8", "16", "4"])
     }
 
     func testEditsInsideCommentsAndFormattingAreUntouched() {

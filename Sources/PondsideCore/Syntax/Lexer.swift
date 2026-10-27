@@ -147,6 +147,8 @@ struct Lexer {
             while i < b.count, b[i] == UInt8(ascii: "'") || b[i] == UInt8(ascii: ",") { i += 1 }
             return Token(kind: .octaveMarks, start: p, end: i)
         case UInt8(ascii: "-"), UInt8(ascii: "^"), UInt8(ascii: "_"):
+            // In figured bass, "7-" is a flat seven: no articulations there.
+            if mode == .figures { return tok(.punctuation, 1) }
             return Lexer.shorthand.contains(at(p + 1)) ? tok(.articulation, 2) : tok(.direction, 1)
         default:
             break

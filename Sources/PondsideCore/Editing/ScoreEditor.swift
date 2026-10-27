@@ -191,9 +191,13 @@ public struct ScoreEditor: Sendable {
         for e in eventIndices.sorted() {
             let ev = events[e]
             if let existing = ev.postEvents.first(where: { tree.string($0) == text }) {
-                edits.append(TextEdit(existing, ""))
+                // Removing `~` from `c4~8` must not leave `c48`.
+                let joins = isWordByte(at: existing.lowerBound - 1) && isWordByte(at: existing.upperBound)
+                edits.append(TextEdit(existing, joins ? " " : ""))
             } else {
-                edits.append(.insert(text, at: ev.range.upperBound))
+                let at = ev.range.upperBound
+                let separate = isWordByte(text.utf8.last) && isWordByte(at: at)
+                edits.append(.insert(separate ? text + " " : text, at: at))
             }
         }
         guard !edits.isEmpty else { return nil }
@@ -234,7 +238,9 @@ public struct ScoreEditor: Sendable {
         }
         noteText += durationText
         let at = ev.range.upperBound
-        edits.append(.insert(" " + noteText, at: at))
+        // `e(d` → `e( g d`, never `e( gd`.
+        let trailing = isWordByte(at: at) || tree.bytes[safe: at] == UInt8(ascii: "<") ? " " : ""
+        edits.append(.insert(" " + noteText + trailing, at: at))
 
         // The next note in the chain is now relative to the inserted note.
         if let inserted, case .relative = ev.octaveMode {
@@ -286,6 +292,16 @@ public struct ScoreEditor: Sendable {
 
     // MARK: Helpers
 
+    /// Letters, digits and octave marks: bytes that would fuse into one token.
+    private func isWordByte(_ c: UInt8?) -> Bool {
+        guard let c else { return false }
+        return Lexer.isLetter(c) || Lexer.isDigit(c) || c == UInt8(ascii: "'") || c == UInt8(ascii: ",")
+    }
+
+    private func isWordByte(at i: Int) -> Bool {
+        isWordByte(tree.bytes[safe: i])
+    }
+
     private func lastPitch(before offset: Int) -> Pitch? {
         notes.last { $0.role == .event && $0.name.upperBound <= offset }?.absolute
     }
@@ -326,4 +342,8 @@ extension ScoreEdit {
         copy.name = name
         return copy
     }
+}
+
+extension Array {
+    subscript(safe i: Int) -> Element? { indices.contains(i) ? self[i] : nil }
 }

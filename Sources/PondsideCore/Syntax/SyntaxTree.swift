@@ -69,6 +69,8 @@ public struct NoteInfo: Sendable, Hashable {
 public struct MusicEvent: Sendable, Hashable {
     public enum Kind: Sendable, Hashable {
         case note, chord, rest, multiMeasureRest, spacer, chordRepeat, lyric, drum
+        /// A bare duration (`c4~ 8`): LilyPond repeats the previous pitch.
+        case repeatedPitch
     }
 
     public var kind: Kind

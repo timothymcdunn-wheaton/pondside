@@ -42,6 +42,15 @@ final class OracleTests: XCTestCase {
             let lilyBase = String(ev.duration.prefix { $0 != "*" })
             switch ev.kind {
             case .note:
+                if tree.noteIndex(startingAt: offset) == nil, let e = tree.eventIndex(at: offset),
+                   tree.events[e].kind == .repeatedPitch {
+                    // `c4~ 8`: a bare duration repeats the previous pitch.
+                    let model = tree.events[e].effectiveDuration
+                    if DurationValue(log: model.log, dots: model.dots).text != lilyBase {
+                        problems.append("\(ev.line):\(ev.character) duration model \(model) vs LilyPond \(ev.duration)")
+                    }
+                    continue
+                }
                 guard let n = tree.noteIndex(startingAt: offset) else {
                     problems.append("LilyPond note at \(ev.line):\(ev.character) unknown to the model")
                     continue

@@ -72,6 +72,8 @@ struct Parser {
     }
     private var st = State()
     private var lastSignificant: SyntaxKind?
+    /// End of the most recent event, to recognise bare durations after it.
+    private var lastEventEnd = -1
 
     enum Closer { case brace, simultaneous, chord, embedded }
     enum Context { case document, music, initial, markup }
@@ -137,6 +139,19 @@ struct Parser {
         return s
     }
 
+    /// Whether `t` comes right after an event, with only trivia and bar
+    /// checks between: there a bare number is a duration-only note.
+    private func followsEvent(_ t: Token) -> Bool {
+        guard lastEventEnd >= 0, lastEventEnd <= t.start else { return false }
+        var q = lastEventEnd
+        while q < t.start {
+            let s = lexer.token(at: q, mode: .notes)
+            if !s.kind.isTrivia && s.kind != .barCheck { return false }
+            q = s.end
+        }
+        return q == t.start
+    }
+
     private static func isAlnum(_ c: UInt8) -> Bool {
         Lexer.isLetter(c) || Lexer.isDigit(c) || c == UInt8(ascii: "-")
     }
@@ -196,6 +211,13 @@ struct Parser {
         case .markupWord:
             st.inlineMarkup = false
             return [consume(t, as: .markupWord)]
+        case .number where (mode == .notes || mode == .chords || mode == .drums) && !st.inlineMarkup
+                            && st.pitchArgs == 0 && followsEvent(t):
+            if let d = parseDuration(t) {
+                return [finishEvent(kind: .repeatedPitch, nodeKind: .event, start: t.start, children: [d],
+                                    notes: [], mode: mode, presetDuration: d.range)]
+            }
+            return [consume(t, as: .number)]
         default:
             st.inlineMarkup = false
             st.pitchArgs = 0
@@ -225,6 +247,8 @@ struct Parser {
         var children = [consume(open, as: open.kind)]
         children += parseSequence(mode: mode, closer: closer, context: context)
         closers.removeLast()
+        // A `\relative c'` left dangling at the end of a block scopes nothing.
+        pendingScope = nil
         if let t = lex(mode), t.kind == closerKind(closer) {
             children.append(consume(t, as: t.kind))
         } else {
@@ -555,18 +579,20 @@ struct Parser {
     /// Duration, chord modifiers / tremolo, and post-events after an event head.
     private mutating func finishEvent(kind: MusicEvent.Kind, nodeKind: SyntaxKind, start: Int,
                                       children headChildren: [SyntaxNode], notes noteIndices: [Int],
-                                      mode: LexMode) -> SyntaxNode {
+                                      mode: LexMode, presetDuration: Range<Int>? = nil) -> SyntaxNode {
         var children = headChildren
-        let insertion = pos
-        var durationRange: Range<Int>?
-        let save = pos
-        let trivia = collectTrivia(mode)
-        if let t = lex(mode), let d = parseDuration(t) {
-            children += trivia
-            children.append(d)
-            durationRange = d.range
-        } else {
-            pos = save
+        let insertion = presetDuration?.lowerBound ?? pos
+        var durationRange = presetDuration
+        if presetDuration == nil {
+            let save = pos
+            let trivia = collectTrivia(mode)
+            if let t = lex(mode), let d = parseDuration(t) {
+                children += trivia
+                children.append(d)
+                durationRange = d.range
+            } else {
+                pos = save
+            }
         }
         if at(pos) == Ch.colon || (mode == .chords && at(pos) == Ch.slash) {
             let s = pos
@@ -595,6 +621,7 @@ struct Parser {
             explicitDuration: explicit, effectiveDuration: defaultDuration, durationInsertion: insertion,
             postEvents: postEvents, octaveMode: frame.mode, chainRefAfter: frame.chainRef,
             key: key, language: language, lexMode: mode))
+        lastEventEnd = pos
         return SyntaxNode(nodeKind, start..<pos, children)
     }
 
@@ -648,7 +675,12 @@ struct Parser {
         case .articulation, .openParen, .closeParen, .openBracket, .closeBracket, .tie:
             return SyntaxNode(.postEvent, t.start..<t.end, [consume(t, as: t.kind)])
         case .escapedPunct where KnownCommands.postEventPunct.contains(text(t.start, t.end)):
-            return SyntaxNode(.postEvent, t.start..<t.end, [consume(t, as: .escapedPunct)])
+            var children = [consume(t, as: .escapedPunct)]
+            // `\=2(` — a spanner id: \= takes a number or string.
+            if text(t.start, t.end) == "\\=", let a = lex(mode), a.kind == .number || a.kind == .string {
+                children.append(consume(a, as: a.kind))
+            }
+            return SyntaxNode(.postEvent, t.start..<pos, children)
         case .command:
             let name = text(t.start + 1, t.end)
             if KnownCommands.postEvents.contains(name) {
@@ -758,6 +790,9 @@ struct Parser {
             else if c == Ch.comma { pos += at(pos + 1) == Ch.at ? 2 : 1 }
             else { break }
         }
+        guard pos < b.count else { return }
+        // #@ and $@ splice a list.
+        if b[pos] == Ch.at, pos > 0, b[pos - 1] == Ch.hash || b[pos - 1] == UInt8(ascii: "$") { pos += 1 }
         guard pos < b.count else { return }
         let c = b[pos]
         if c == Ch.openParen { scanList(&children, &textStart); return }
