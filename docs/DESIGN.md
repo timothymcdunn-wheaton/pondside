@@ -413,6 +413,12 @@ Music semantics, measured with the `EventDump` listener (and encoded in
 - **The default duration is lexically global** (across blocks and lines)
   and **includes multipliers**: `c'4*2 d'` gives `d'` a length of `4*2`.
   Tuplets scale the sounding length but not the inherited written value.
+- **Whitespace between a pitch and its duration is allowed:** `d' 8` is `d'8`.
+- **A bare duration repeats the previous pitch:** `f'1~ 2`, `g'16 4`, and
+  `\breve` likewise. This applies in music position: after an event or bar
+  check, or at the start of a block. After a chord it repeats the whole
+  chord, like `q`. With no previous pitch (RhythmicStaff) it is a pitchless
+  note.
 
 ---
 
@@ -450,3 +456,28 @@ daemon (M4).
 | Keyboard note input | ✅ `NoteInput`: LilyPond durations and syntax as keys |
 | Unified undo across both views | ✅ score edits are text edits on the window's undo stack |
 | Mouse entry (click a staff position with a duration armed) | ⏳ needs staff-geometry hit-testing; next |
+
+M2 test results (Linux CI): 84 tests, all passing.
+
+- **Corpus:** 2,423 files from LilyPond's regression suite, snippets and
+  init files; 29,673 notes; 40,357 random edits. Every file is lossless.
+  Two files (0.1%) need syntax recovery, both deliberately exotic
+  Scheme-generated music. Every edit satisfies locality, semantics and
+  reversibility.
+- **Fixtures:** 1,000 edits per score, all invariants holding.
+- **Oracle:** the model agrees with LilyPond on every note of every fixture,
+  before and after random edits.
+
+What the corpus taught the edit model, beyond the plan:
+
+- **Separators:** inserted and removed text must not fuse tokens
+  (`e(d` → `e( g d`, `c4~8` → `c4 8`).
+- **Bare durations downstream** of an insert or delete are written out
+  (`f'1~ g f'2`, `q` after chords), so they keep sounding the same pitch.
+- **A chord that a later `q` repeats** is copied into that `q` when the
+  chord is deleted. In `\relative` the delete is refused, because a
+  written-out chord would join the octave chain.
+- **Refused edits:** deleting the sole operand of `\relative c' c1`, and
+  inserting a pitch before pitchless rhythm. Neither can be made
+  meaning-preserving in writing, so the editor declines rather than
+  guessing.
