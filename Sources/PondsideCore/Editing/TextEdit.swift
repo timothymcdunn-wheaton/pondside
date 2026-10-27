@@ -36,7 +36,7 @@ extension Array where Element == TextEdit {
         var cursor = 0
         for e in normalized {
             out.append(contentsOf: bytes[cursor..<e.range.lowerBound])
-            out.append(contentsOf: Array(e.replacement.utf8))
+            out.append(contentsOf: e.replacement.utf8)
             cursor = e.range.upperBound
         }
         out.append(contentsOf: bytes[cursor...])
@@ -44,7 +44,7 @@ extension Array where Element == TextEdit {
     }
 
     public func apply(to text: String) -> String {
-        String(decoding: apply(to: Array(text.utf8)), as: UTF8.self)
+        String(decoding: apply(to: [UInt8](text.utf8)), as: UTF8.self)
     }
 
     /// Maps an offset in the old text to the new text. An offset at the

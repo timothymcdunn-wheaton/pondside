@@ -48,6 +48,12 @@ final class WeakRef<T: AnyObject>: @unchecked Sendable {
 final class ScoreDocument {
     let url: URL
     private(set) var text: String
+    /// The parsed text, always in step with `text`.
+    private(set) var tree: SyntaxTree
+    /// The text the current pages were engraved from (their links refer to it).
+    private(set) var engravedText: String?
+    /// The text the current diagnostics refer to.
+    private(set) var compiledText: String?
     weak var delegate: ScoreDocumentDelegate?
 
     private(set) var status: CompileStatus = .idle
@@ -72,6 +78,7 @@ final class ScoreDocument {
         let contents = String(decoding: try Data(contentsOf: url), as: UTF8.self)
         self.url = url
         text = contents
+        tree = SyntaxTree(contents)
         workDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Pondside", isDirectory: true)
             .appendingPathComponent(ContentHash(url.path).description, isDirectory: true)
@@ -109,6 +116,7 @@ final class ScoreDocument {
 
     func userEdited(_ newText: String) {
         text = newText
+        tree = SyntaxTree(newText)
         saveTask?.cancel()
         saveTask = Task { [weak self] in
             try? await Task.sleep(for: ScoreDocument.autosaveDelay)
@@ -171,6 +179,7 @@ final class ScoreDocument {
         saveTask?.cancel()
         saveTask = nil
         text = diskText
+        tree = SyntaxTree(diskText)
         sync.noteSynced(diskText)
         declaredVersion = LilyPondVersion.declared(in: diskText)
     }
@@ -199,9 +208,13 @@ final class ScoreDocument {
         setStatus(.compiling)
         let engraver = LilyPondEngraver(installation: installation)
         let source = url
+        // Exactly what LilyPond will read, so links and diagnostics can be
+        // mapped back onto text that has moved on since.
+        let snapshot = (try? String(contentsOf: url, encoding: .utf8)) ?? text
         let out = workDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         Task {
-            let outcome = await Self.compile(engraver, source: source, out: out)
+            var outcome = await Self.compile(engraver, source: source, out: out)
+            outcome.snapshot = snapshot
             self.finish(outcome)
         }
     }
@@ -210,6 +223,7 @@ final class ScoreDocument {
         var result: EngraveResult?
         var pages: [EngravedPage]
         var error: String?
+        var snapshot = ""
     }
 
     /// Runs off the main actor: the compile and the SVG parsing.
@@ -227,6 +241,7 @@ final class ScoreDocument {
     private func finish(_ outcome: Outcome) {
         compileRunning = false
         if let result = outcome.result {
+            compiledText = outcome.snapshot
             diagnostics = result.diagnostics.filter { d in
                 guard let file = d.file else { return true }
                 return PathMatching.same(file, url.path) || file == url.lastPathComponent
@@ -235,6 +250,7 @@ final class ScoreDocument {
             // so the score never blanks out mid-thought.
             if !outcome.pages.isEmpty {
                 pages = outcome.pages
+                engravedText = outcome.snapshot
                 linkedPositions = Self.positions(in: pages)
             }
             let errorCount = result.errors.count

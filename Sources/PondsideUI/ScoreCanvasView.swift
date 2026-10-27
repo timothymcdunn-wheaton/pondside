@@ -8,8 +8,8 @@ protocol ScoreCanvasDelegate: AnyObject {
     func canvas(_ canvas: ScoreCanvasView, didClick link: PointAndClickLocation?, extending: Bool)
     /// The user dragged a selection rectangle over these links.
     func canvas(_ canvas: ScoreCanvasView, didSelect links: [PointAndClickLocation])
-    /// Keyboard navigation through linked objects in source order.
-    func canvas(_ canvas: ScoreCanvasView, moveSelectionBy step: Int)
+    /// A key pressed while the score has focus. Return true if handled.
+    func canvas(_ canvas: ScoreCanvasView, handleKey event: NSEvent) -> Bool
 }
 
 /// The score surface: pages floating on the dark field.
@@ -158,15 +158,8 @@ final class ScoreCanvasView: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
-        if event.keyCode == 53 { // Escape
-            delegate?.canvas(self, didClick: nil, extending: false)
-            return
-        }
-        switch event.specialKey {
-        case .rightArrow?: delegate?.canvas(self, moveSelectionBy: 1)
-        case .leftArrow?: delegate?.canvas(self, moveSelectionBy: -1)
-        default: super.keyDown(with: event)
-        }
+        if delegate?.canvas(self, handleKey: event) == true { return }
+        super.keyDown(with: event)
     }
 
     // Re-centre pages when the viewport resizes.

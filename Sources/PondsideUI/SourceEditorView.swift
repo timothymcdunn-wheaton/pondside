@@ -113,6 +113,16 @@ final class SourceEditorView: NSView, NSTextViewDelegate {
         scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 
+    /// Applies an edit made in the score as an ordinary, undoable text
+    /// change. Score and source share the window's undo manager, so ⌘Z in
+    /// either pane undoes both kinds of edit in order.
+    func replace(_ range: NSRange, with string: String, actionName: String) {
+        guard textView.shouldChangeText(in: range, replacementString: string) else { return }
+        textView.textStorage?.replaceCharacters(in: range, with: NSAttributedString(string: string, attributes: baseAttributes))
+        textView.didChangeText()
+        textView.undoManager?.setActionName(actionName)
+    }
+
     func select(_ range: NSRange, scroll: Bool = true) {
         let length = (textView.string as NSString).length
         let clamped = NSRange(location: min(range.location, length), length: min(range.length, max(0, length - range.location)))

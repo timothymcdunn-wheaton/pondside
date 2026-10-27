@@ -10,6 +10,8 @@ final class StatusBarView: NSView {
     private let rightLabel = StatusBarView.label(Theme.secondaryText)
     private var flashTask: Task<Void, Never>?
     private var baseStatus = ""
+    private var rightText = ""
+    private var inputText = ""
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -83,8 +85,22 @@ final class StatusBarView: NSView {
         statusLabel.toolTip = detail
         var right = "\(Int((zoom * 100).rounded()))%   \(toolchain)"
         if let note { right = note + "   " + right }
-        rightLabel.stringValue = right
+        rightText = right
+        renderRight()
         rightLabel.toolTip = "Zoom: ⌘= / ⌘- / ⌘0 fit width. Toolchain: the LilyPond this score compiles with."
+    }
+
+    /// Note-input state: the armed duration and any half-typed input.
+    func setInput(armed: String?, buffer: String) {
+        var parts: [String] = []
+        if let armed { parts.append("Next: \(armed)") }
+        if !buffer.isEmpty { parts.append(buffer + "▏") }
+        inputText = parts.joined(separator: "   ")
+        renderRight()
+    }
+
+    private func renderRight() {
+        rightLabel.stringValue = inputText.isEmpty ? rightText : inputText + "      " + rightText
     }
 
     func setHints(_ hints: [String]) {

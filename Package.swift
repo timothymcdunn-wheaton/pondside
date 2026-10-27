@@ -23,7 +23,8 @@ var targets: [Target] = [
     .target(name: "PondsideBridge", dependencies: ["PondsideCore", "PondsideEngrave", "PondsideTiming", "PondsideLexicon"]),
     .executableTarget(name: "PondsideCLI", dependencies: ["PondsideCore", "PondsideEngrave", "PondsideBridge"]),
 
-    .testTarget(name: "PondsideCoreTests", dependencies: ["PondsideCore"], resources: [.copy("Fixtures")]),
+    // Shared real-world scores live in Tests/Scores and are read by path.
+    .testTarget(name: "PondsideCoreTests", dependencies: ["PondsideCore"]),
     .testTarget(name: "PondsideEngraveTests", dependencies: ["PondsideEngrave"], resources: [.copy("Fixtures")]),
 ]
 

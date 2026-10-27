@@ -16,8 +16,11 @@ import XCTest
 /// 4. **Reversibility** — applying the inverse edits in reverse order restores
 ///    the original file byte for byte.
 final class RoundTripPropertyTests: XCTestCase {
+    /// Tests/Scores, located from this source file so every test target can
+    /// share the same real-world scores.
     static func fixtures() throws -> [(String, String)] {
-        let dir = try XCTUnwrap(Bundle.module.url(forResource: "Fixtures", withExtension: nil))
+        let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Scores")
         let names = try FileManager.default.contentsOfDirectory(atPath: dir.path).filter { $0.hasSuffix(".ly") }.sorted()
         return try names.map { ($0, try String(contentsOf: dir.appendingPathComponent($0), encoding: .utf8)) }
     }
