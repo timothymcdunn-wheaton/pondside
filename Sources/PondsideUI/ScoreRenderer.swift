@@ -20,7 +20,7 @@ final class RenderedPage {
         items = page.graphics.map { graphic in
             switch graphic.content {
             case let .path(path, fill, stroke, style):
-                return .path(Self.cgPath(path), fill: fill.map(Self.cgColor), stroke: stroke.map(Self.cgColor), style)
+                return .path(Self.cgPath(path), fill: fill.map { Self.cgColor($0) }, stroke: stroke.map { Self.cgColor($0) }, style)
             case let .text(run):
                 let font = FontResolver.font(family: run.fontFamily, size: run.fontSize, bold: run.bold, italic: run.italic)
                 let attributed = NSAttributedString(string: run.string, attributes: [

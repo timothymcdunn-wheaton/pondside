@@ -478,7 +478,7 @@ extension DocumentWindowController: ScoreCanvasDelegate {
     }
 
     func canvas(_ canvas: ScoreCanvasView, didSelect links: [PointAndClickLocation]) {
-        let offsets = links.filter { PathMatching.same($0.path, score.url.path) }.compactMap(currentOffset(of:))
+        let offsets = links.filter { PathMatching.same($0.path, score.url.path) }.compactMap { currentOffset(of: $0) }
         let events = Set(offsets.compactMap { tree.eventIndex(at: $0) })
         guard !events.isEmpty else { return }
         // A rectangle selects the contiguous source span it covers.
