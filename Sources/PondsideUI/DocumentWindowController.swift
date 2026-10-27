@@ -37,7 +37,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
         window.title = document.url.lastPathComponent
         window.representedURL = document.url
         window.minSize = NSSize(width: 640, height: 400)
-        _ = window.setFrameAutosaveName("Pondside.\(score.url.path)")
+        _ = window.setFrameAutosaveName("Pondside.\(document.url.path)")
         super.init(window: window)
         window.delegate = self
         buildLayout()
