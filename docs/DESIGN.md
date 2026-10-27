@@ -795,3 +795,56 @@ the brief assumed. Provisional rendering is what still separates
   hash plus renderer and rate.
 - **Not yet:** per-staff stems for muting live parts, padding the render
   to the `end` mark, and in-app audition (AVAudioEngine).
+
+### M6 — programmability
+
+- **CLI:** `check`, `render`, `cues`, `timeline`, `handlers`, `mockup`,
+  `lexicon …`, `links`, `doctor`, `watch`, `rpc`, `mcp` and
+  `completion zsh|bash`. It links only portable modules.
+- **MCP** (`pondside mcp`, stdio): tools `check`, `query`, `render`,
+  `cues` and `lexicon_check`; the Lexicon tiers are resources. No vendor
+  is hardcoded. docs/API.md shows setup for Claude Code, opencode and any
+  other client.
+- **JSON-RPC socket** for the running app: document state, selection,
+  select, engrave, cues and open, plus `score.changed`,
+  `compile.finished` and `selection.changed` events. The server core is
+  portable and tested over real sockets on Linux.
+- **`pondside.toml`:** the LilyPond version pin, sample rate, renderer,
+  SoundFont and SuperCollider paths. The CLI and the app read it.
+- **Not yet:** the agent pane (today the terminal pane runs any agent,
+  and that agent reaches Pondside through MCP), `pondside insert` and
+  `query --measures`, OSC.
+
+### M9 — graphic notation (groundwork)
+
+The contemporary primitives arrive as Lexicon entries, so each comes with
+a chord-free invocation, typed params, a README with pitfalls, and
+timing that the cue engine understands:
+
+- Done: `feathered-beam`, `niente-hairpin`, `air-tone` (with a sound),
+  `timed-fermata`, `senza-misura` (unmetered, with a decided length) and
+  `proportional`.
+- To do: box notation with repeat-until-cue, aleatoric boxes, squiggle
+  lines, pitch bands, graphic inclusion anchored to time, microtonal
+  accidentals, and annotation layers. The composer's own
+  contemporary-notation library is the obvious source for several of
+  these, as project or user Lexicon entries.
+- Natural-language authoring needs the agent surface. The Lexicon tiers
+  over MCP are the part that makes it cheap; the authoring loop itself is
+  not built.
+
+## 8. Where things stand
+
+| Milestone | State |
+|---|---|
+| M1 the loop | done |
+| M2 editing | done; round-trip proven on the 2.24.3 corpus (2,423 files, 40k edits) |
+| M2.1 multi-file scores | done |
+| Mouse entry | done; not yet tried by hand |
+| M3 interface | catalog, chords, palette, hints, ⌥ reveal, panes, terminal, keyboard audit: done; not yet tried by hand |
+| M4 speed | warm daemon (10–20× on recompiles), provisional ghosts for pitch moves; caching of systems and windowed compiles not started |
+| M5 editor and toolchains | not started (LSP client, tree-sitter highlighting, toolchain manager UI) |
+| M6 programmability | CLI, MCP, socket, pondside.toml: done; agent pane not started |
+| M7 Lexicon | storage, tiers, validation, expansion, checking, six core entries: done; browser, promotion, previews, lock not started |
+| M8 time and sound | timing engine, cues.json, handler sync, quark, Cue Inspector, mockup render: done; quark and mockup untested against a real SuperCollider and MuseScore |
+| M9 graphic notation | groundwork (entries above) |
