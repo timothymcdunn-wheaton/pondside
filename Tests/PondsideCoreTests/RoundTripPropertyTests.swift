@@ -204,31 +204,42 @@ struct EditFuzzer {
         guard new.reconstructed == newText else { return "not lossless after \(edits)" }
 
         // 2. Semantics.
-        let oldEventNotes = old.notes.indices.filter { old.notes[$0].role == .event }
-        let newEventNotes = new.notes.indices.filter { new.notes[$0].role == .event }
-        var skipOldNotes = Set<Int>(), skipNewNotes = Set<Int>()
+        // What each event sounds: its notes, or for bare durations and `q`
+        // the pitches they repeat.
+        var skipOldPitch = Set<Int>(), skipNewPitch = Set<Int>()
         var skipOldEvents = Set<Int>(), skipNewEvents = Set<Int>()
         switch check {
         case .pitch(let t):
-            skipOldNotes = t
-            skipNewNotes = t
+            // The targets, and repeats (bare durations, `q`) that follow them.
+            let events = Set(t.compactMap { old.notes[$0].event })
+            let followers = Self.sources(old).enumerated().filter { $0.element.map(events.contains) ?? false }.map(\.offset)
+            skipOldPitch = events.union(followers)
+            skipNewPitch = skipOldPitch
         case .duration(let t):
             skipOldEvents = t
             skipNewEvents = t
         case .postEvent:
             break
-        case .insert(let e, let isRest):
+        case .insert(let e, _):
             skipNewEvents = [e + 1]
-            if !isRest, let firstNew = new.events[safe: e + 1]?.notes.first { skipNewNotes = [firstNew] }
+            skipNewPitch = [e + 1]
         case .delete(let t):
             skipOldEvents = t
-            skipOldNotes = Set(t.flatMap { old.events[$0].notes })
+            skipOldPitch = t
         }
-        let oldPitches = oldEventNotes.filter { !skipOldNotes.contains($0) }.map { old.notes[$0].absolute }
-        let newPitches = newEventNotes.filter { !skipNewNotes.contains($0) }.map { new.notes[$0].absolute }
-        if oldPitches != newPitches {
-            let i = zip(oldPitches, newPitches).enumerated().first { $0.element.0 != $0.element.1 }?.offset ?? min(oldPitches.count, newPitches.count)
-            return "pitches changed for \(check) at note #\(i): \(oldPitches[safe: i].map(\.description) ?? "-") → \(newPitches[safe: i].map(\.description) ?? "-"); edits \(edits)"
+        let oldSounding = Self.sounding(old).enumerated().filter { !skipOldEvents.contains($0.offset) && !skipOldPitch.contains($0.offset) }.map(\.element)
+        // A pitch-move target is skipped in both; insert/delete skip one side.
+        let newSkip = skipNewEvents.union(skipNewPitch)
+        let newSounding = Self.sounding(new).enumerated().filter { !newSkip.contains($0.offset) }.map(\.element)
+        let oldAligned: [[Pitch]]
+        if case .pitch = check {
+            oldAligned = Self.sounding(old).enumerated().filter { !skipOldPitch.contains($0.offset) }.map(\.element)
+        } else {
+            oldAligned = oldSounding
+        }
+        if oldAligned != newSounding {
+            let i = zip(oldAligned, newSounding).enumerated().first { $0.element.0 != $0.element.1 }?.offset ?? min(oldAligned.count, newSounding.count)
+            return "pitches changed for \(check) at event #\(i): \(oldAligned[safe: i]?.description ?? "-") → \(newSounding[safe: i]?.description ?? "-"); edits \(edits)"
         }
         let oldDurations = old.events.indices.filter { !skipOldEvents.contains($0) }.map { old.events[$0].effectiveDuration }
         let newDurations = new.events.indices.filter { !skipNewEvents.contains($0) }.map { new.events[$0].effectiveDuration }
@@ -237,6 +248,42 @@ struct EditFuzzer {
             return "durations changed for \(check) at event #\(i); edits \(edits)"
         }
         return nil
+    }
+
+    /// For repeats, the index of the event they repeat.
+    static func sources(_ tree: SyntaxTree) -> [Int?] {
+        var lastPitched: Int?
+        var lastChord: Int?
+        return tree.events.enumerated().map { i, ev in
+            switch ev.kind {
+            case .repeatedPitch: return lastPitched
+            case .chordRepeat: return lastChord
+            default:
+                if ev.isPitched { lastPitched = i }
+                if ev.kind == .chord { lastChord = i }
+                return nil
+            }
+        }
+    }
+
+    /// The pitches each event sounds, resolving bare durations and `q`.
+    static func sounding(_ tree: SyntaxTree) -> [[Pitch]] {
+        var lastPitched: [Pitch] = []
+        var lastChord: [Pitch] = []
+        return tree.events.map { ev in
+            switch ev.kind {
+            case .repeatedPitch:
+                return lastPitched
+            case .chordRepeat:
+                lastPitched = lastChord
+                return lastChord
+            default:
+                let p = ev.notes.map { tree.notes[$0].absolute }
+                if !p.isEmpty { lastPitched = p }
+                if ev.kind == .chord { lastChord = p }
+                return p
+            }
+        }
     }
 
     private func deletionWindow(_ r: Range<Int>, _ b: [UInt8]) -> Range<Int> {

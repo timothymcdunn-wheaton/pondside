@@ -495,7 +495,12 @@ struct Parser {
     private mutating func parseEvent(head t: Token, mode: LexMode) -> SyntaxNode {
         let scope = takePendingScope()
         if let scope { frames.append(scope) }
-        defer { if scope != nil { frames.removeLast() } }
+        defer {
+            if scope != nil {
+                frames.removeLast()
+                events[events.count - 1].isScopeOperand = true
+            }
+        }
         st.pitchArgs = 0
         let word = text(t.start, t.end)
         var children: [SyntaxNode] = []
@@ -525,7 +530,12 @@ struct Parser {
     private mutating func parseChordEvent(_ open: Token, mode: LexMode) -> SyntaxNode {
         let scope = takePendingScope()
         if let scope { frames.append(scope) }
-        defer { if scope != nil { frames.removeLast() } }
+        defer {
+            if scope != nil {
+                frames.removeLast()
+                events[events.count - 1].isScopeOperand = true
+            }
+        }
         let eventIndex = events.count
         var chordChildren = [consume(open, as: .openChord)]
         var members: [Int] = []

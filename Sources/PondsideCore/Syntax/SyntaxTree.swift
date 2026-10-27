@@ -93,6 +93,8 @@ public struct MusicEvent: Sendable, Hashable {
     public var language: PitchLanguage
     /// The lexer mode the event was read in (notes, chords, lyrics …).
     public var lexMode: LexMode
+    /// The event alone is the operand of `\relative`/`\fixed` (`\relative c' c1`).
+    public var isScopeOperand = false
 
     public var isPitched: Bool { !notes.isEmpty }
     /// Whether ordinary note entry (insert, slurs, articulations) applies.

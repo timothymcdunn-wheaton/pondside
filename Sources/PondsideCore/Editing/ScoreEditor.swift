@@ -242,6 +242,26 @@ public struct ScoreEditor: Sendable {
         let trailing = isWordByte(at: at) || tree.bytes[safe: at] == UInt8(ascii: "<") ? " " : ""
         edits.append(.insert(" " + noteText + trailing, at: at))
 
+        // A bare duration right after would now repeat (or absorb) the
+        // inserted note: write out what it actually sounds.
+        let next = eventIndex + 1 < events.count ? eventIndex + 1 : nil
+        if let next, events[next].kind == .repeatedPitch, let slot = events[next].duration?.lowerBound {
+            if let source = events[..<next].last(where: { $0.isPitched }), source.kind == .chord {
+                edits.append(.insert("q", at: slot))
+            } else if let source = events[..<next].last(where: { $0.isPitched }), let n = source.notes.first {
+                let p = notes[n].absolute
+                let reference = inserted ?? ev.chainRefAfter.map { notes[$0].absolute }
+                let marks = OctaveRules.marks(for: p, mode: events[next].octaveMode, reference: reference)
+                edits.append(.insert(notes[n].language.spell(step: p.step, alteration: p.alteration, longForm: notes[n].longForm)
+                                     + OctaveRules.markText(marks), at: slot))
+            }
+            // The written-out note keeps the old reference pitch, so nothing
+            // after it needs compensating.
+            let anchor = at + 1
+            return ScoreEdit(name: step == nil ? "Insert Rest" : "Insert Note", edits: edits,
+                             selectionAnchors: [mapped(anchor, through: edits, insertionAt: at)])
+        }
+
         // The next note in the chain is now relative to the inserted note.
         if let inserted, case .relative = ev.octaveMode {
             let ref = ev.chainRefAfter
@@ -268,9 +288,27 @@ public struct ScoreEditor: Sendable {
     public func delete(events eventIndices: [Int]) -> ScoreEdit? {
         let targets = Set(eventIndices)
         guard !targets.isEmpty else { return nil }
+        // `\relative c' c1`: removing the operand would hand the scope to
+        // whatever comes next.
+        if targets.contains(where: { events[$0].isScopeOperand }) { return nil }
         var edits: [TextEdit] = []
+        var materialized = false
         for e in targets.sorted() {
             edits.append(TextEdit(deletionRange(events[e].range), ""))
+            // A bare duration repeating this event keeps sounding it: copy the
+            // head verbatim (its marks were relative to the same reference).
+            let next = e + 1
+            if next < events.count, !targets.contains(next), events[next].kind == .repeatedPitch,
+               events[e].isPitched, let slot = events[next].duration?.lowerBound {
+                edits.append(.insert(tree.string(events[e].range.lowerBound..<events[e].durationInsertion), at: slot))
+                materialized = true
+            }
+        }
+        if materialized {
+            let first = targets.min()!
+            let anchorEvent = events.indices.first { $0 > first && !targets.contains($0) }
+            return ScoreEdit(name: "Delete", edits: edits + protectSuccessors(of: [], newEffective: [:], removed: targets),
+                             selectionAnchors: anchorEvent.map { [edits.mapOffset(events[$0].range.lowerBound)] } ?? [])
         }
         // Notes relative to a deleted note now refer to its referent.
         let deletedNotes = Set(targets.flatMap { events[$0].notes })
