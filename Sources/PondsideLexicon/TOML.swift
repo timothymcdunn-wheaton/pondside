@@ -132,6 +132,8 @@ public enum TOML {
         }
 
         mutating func ensureTable(_ path: [String]) throws {
+            let line = self.line
+            func error(_ m: String) -> TOMLError { TOMLError(line: line, message: m) }
             func make(_ t: inout [String: TOMLValue], _ rest: ArraySlice<String>) throws {
                 guard let k = rest.first else { return }
                 var sub: [String: TOMLValue]
@@ -143,10 +145,14 @@ public enum TOML {
                 try make(&sub, rest.dropFirst())
                 t[k] = .table(sub)
             }
-            try make(&root, path[...])
+            var r = root
+            try make(&r, path[...])
+            root = r
         }
 
         mutating func set(_ path: [String], _ v: TOMLValue) throws {
+            let line = self.line
+            func error(_ m: String) -> TOMLError { TOMLError(line: line, message: m) }
             func put(_ t: inout [String: TOMLValue], _ rest: ArraySlice<String>) throws {
                 let k = rest.first!
                 if rest.count == 1 {
@@ -163,7 +169,9 @@ public enum TOML {
                 try put(&sub, rest.dropFirst())
                 t[k] = .table(sub)
             }
-            try put(&root, path[...])
+            var r = root
+            try put(&r, path[...])
+            root = r
         }
 
         mutating func value() throws -> TOMLValue {

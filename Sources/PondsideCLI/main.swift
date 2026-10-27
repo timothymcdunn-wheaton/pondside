@@ -3,6 +3,7 @@ import PondsideCore
 import PondsideEngrave
 import PondsideTiming
 import PondsideLexicon
+import PondsideBridge
 
 // `pondside` — the headless command-line surface. Links only portable
 // modules, so it runs on any platform Swift does.
@@ -33,6 +34,12 @@ commands:
       tier 1 (entry.toml and README), impl is tier 2 (the implementation).
       check finds \\lexicon uses with unknown entries or bad params; include
       writes the settings file that defines \\lexicon for a score.
+  completion zsh|bash
+      Print a completion script: eval "$(pondside completion zsh)".
+  mcp [--project <dir>]
+      Serve the Model Context Protocol on stdin/stdout: tools (check, query,
+      render, cues, lexicon_check) and the Lexicon tiers as resources.
+      Claude Code: claude mcp add pondside -- pondside mcp
   timeline <file.ly> [--json]
       The tempo map: each tempo step's moment, seconds and quarter notes per minute.
   watch <file> --on-change <command>
@@ -310,6 +317,60 @@ func lexiconCommand(_ args: Arguments) throws -> Int32 {
     return 0
 }
 
+let completionCommands = ["render", "check", "cues", "timeline", "handlers", "lexicon", "links", "doctor", "watch", "mcp",
+                          "completion", "version", "help"]
+
+func completion(_ args: Arguments) throws -> Int32 {
+    let commands = completionCommands.joined(separator: " ")
+    switch args.positional.first {
+    case "zsh":
+        print("""
+        #compdef pondside
+        _pondside() {
+          local -a commands
+          commands=(\(commands))
+          if (( CURRENT == 2 )); then
+            _describe 'command' commands
+          elif [[ $words[2] == lexicon && CURRENT == 3 ]]; then
+            _values 'lexicon command' list show impl check include
+          elif [[ $words[2] == lexicon && ( $words[3] == show || $words[3] == impl ) ]]; then
+            local -a ids
+            ids=(${(f)"$(pondside lexicon list 2>/dev/null | sed -n 's/.*"id":"\\([^"]*\\)".*/\\1/p')"})
+            _describe 'entry' ids
+          elif [[ $words[2] == completion ]]; then
+            _values 'shell' zsh bash
+          else
+            _arguments '*:file:_files -g "*.(ly|ily|svg)"' '--format[output format]:format:(pdf svg png json cues)' \\
+              '--out[output path]:path:_files' '--json[JSON output]' '--rate[sample rate]:rate:(44100 48000 96000)' \\
+              '--scd[SuperCollider file]:file:_files -g "*.scd"' '--project[project folder]:dir:_files -/'
+          fi
+        }
+        compdef _pondside pondside
+        """)
+    case "bash":
+        print("""
+        _pondside() {
+          local cur=${COMP_WORDS[COMP_CWORD]}
+          if [[ $COMP_CWORD -eq 1 ]]; then
+            COMPREPLY=($(compgen -W "\(commands)" -- "$cur"))
+          elif [[ ${COMP_WORDS[1]} == lexicon && $COMP_CWORD -eq 2 ]]; then
+            COMPREPLY=($(compgen -W "list show impl check include" -- "$cur"))
+          elif [[ ${COMP_WORDS[1]} == completion ]]; then
+            COMPREPLY=($(compgen -W "zsh bash" -- "$cur"))
+          elif [[ $cur == --* ]]; then
+            COMPREPLY=($(compgen -W "--format --out --json --rate --scd --project --on-change" -- "$cur"))
+          else
+            COMPREPLY=($(compgen -f -- "$cur"))
+          fi
+        }
+        complete -o filenames -F _pondside pondside
+        """)
+    default:
+        throw CLIError("completion needs zsh or bash")
+    }
+    return 0
+}
+
 func timeline(_ args: Arguments) async throws -> Int32 {
     let sheet = try await cueSheet(args)
     if args.flags.contains("json") {
@@ -350,6 +411,11 @@ do {
     case "timeline": status = try await timeline(args)
     case "handlers": status = try await handlers(args)
     case "lexicon": status = try lexiconCommand(args)
+    case "completion": status = try completion(args)
+    case "mcp":
+        let project = URL(fileURLWithPath: args.options["project"] ?? FileManager.default.currentDirectoryPath)
+        await MCPServer(project: project).serveStdio()
+        status = 0
     case "version", "--version": print("pondside 0.1.0 (M1)"); status = 0
     case "help", "--help", "-h": print(usage); status = 0
     default:

@@ -29,6 +29,7 @@ var targets: [Target] = [
     // Shared real-world scores live in Tests/Scores and are read by path.
     .testTarget(name: "PondsideCoreTests", dependencies: ["PondsideCore"]),
     .testTarget(name: "PondsideTimingTests", dependencies: ["PondsideTiming"]),
+    .testTarget(name: "PondsideBridgeTests", dependencies: ["PondsideBridge"]),
     .testTarget(name: "PondsideLexiconTests", dependencies: ["PondsideLexicon", "PondsideEngrave"]),
     .testTarget(name: "PondsideEngraveTests", dependencies: ["PondsideEngrave"], resources: [.copy("Fixtures")]),
 ]
