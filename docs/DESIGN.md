@@ -561,3 +561,52 @@ editable.
 
 **Order:** A and B first. They are small and immediately restore
 highlighting on real scores. C comes next, and mouse entry after it.
+
+#### M2.1 — what was built, and where it departs from the plan
+
+- **A.** The spike showed that redefining `pointAndClickOff` in the
+  settings file does **not** reach music in the user's files: their
+  `\pointAndClickOff` is looked up after the settings file is read and
+  resolves to the built-in. So `pondside-session.ily` wraps
+  `ly:set-option` and ignores any `'point-and-click` value other than
+  `#t`. That neutralizes `\pointAndClickOff`, `\pointAndClickTypes` and
+  raw `ly:set-option` calls. Verified on 2.24.3 only; 2.26 still needs a
+  check, which `MultiFileTests` will do once CI has 2.26.
+- **B.** As planned: the status line names files that have notes but no
+  links, and a click on unlinked music explains itself.
+- **C.** `SourceGraph` (PondsideEngrave) resolves includes from the
+  includer's directory, then the root's directory, then `-I`. It parses
+  each file with the language left in effect by earlier includes, and
+  iterates to a fixed point because an include's result can depend on the
+  language it is entered with. `ScoreDocument` holds one `SourceFile` per
+  graph file (text, tree, undo, autosave, watcher, snapshot, diagnostics,
+  links). The source pane shows one file at a time: a file bar, plus
+  ⌘⇧] / ⌘⇧[. A drag selection edits the file most of its links come
+  from.
+- **Known limit:** the default duration does not carry across
+  `\include` boundaries. Music in an include that starts with a bare
+  note inherits LilyPond's duration from the includer, but Pondside
+  assumes a quarter. This is rare, because parts start with explicit
+  durations. The oracle tests will show it if it matters.
+
+### Mouse entry
+
+- **Staves come from geometry.** LilyPond's SVG has no staff objects, so
+  `EngravedPage.staves` looks for five horizontal strokes of the same
+  length with even spacing.
+- **The clef is never parsed.** The pitch of the nearest notehead on the
+  same staff calibrates the click: `diatonic = pitch(anchor) −
+  position(anchor) + position(click)`. That handles every clef,
+  transposing clefs and `\ottava` without a model of any of them. The
+  catch is that a staff needs one note before mouse entry works on it.
+  Pondside says so instead of guessing a treble clef.
+- **The interaction.** Mouse entry is not a mode: it is on while a
+  duration is armed (type `8` with nothing selected), and the status line
+  shows that. A ghost notehead, with ledger lines, previews the
+  placement. Click to insert after whatever stands to the left; that
+  works in any file of the graph. ⎋ with nothing selected disarms. The
+  accidental comes from the key, as in keyboard entry, and `⌥↑↓` fixes
+  it afterwards.
+- **Not yet:** adding to a chord by clicking at an existing note's x;
+  inserting before a staff's first note; tab and percussion staves
+  (fewer than five lines).
