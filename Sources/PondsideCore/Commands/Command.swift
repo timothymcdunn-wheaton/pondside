@@ -55,7 +55,8 @@ public struct KeyStroke: Hashable, Sendable, CustomStringConvertible {
             }
             break
         }
-        guard !rest.isEmpty else { return nil }
+        // A modifier alone ("⌘") is not a key.
+        guard let last = rest.last, rest.count > 1 || glyphs[last] == nil else { return nil }
         let key = String(rest)
         if key.count > 1 {
             let lower = key.lowercased()
