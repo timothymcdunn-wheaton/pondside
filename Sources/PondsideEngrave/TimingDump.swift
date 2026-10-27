@@ -16,6 +16,10 @@ public enum TimingDump {
     public static let listener = """
     #(define pondside-timing-last-meter #f)
 
+    % ly:duration-length in 2.24, ly:duration->moment later.
+    #(define pondside-duration-moment
+       (primitive-eval (if (defined? 'ly:duration->moment) 'ly:duration->moment 'ly:duration-length)))
+
     #(define (pondside-timing-row context kind . values)
        (let ((m (ly:context-current-moment context)))
          (if (zero? (ly:moment-grace m))
@@ -50,7 +54,7 @@ public enum TimingDump {
                 (unit (ly:event-property event 'tempo-unit #f)))
             (if (and (number? count) unit)
                 (pondside-timing-row context "tempo"
-                  (exact->inexact (* count (/ (ly:moment-main (ly:duration->moment unit)) 1/4)))))))
+                  (exact->inexact (* count (/ (ly:moment-main (pondside-duration-moment unit)) 1/4)))))))
          ((text-script-event engraver event)
           (let ((cue (ly:event-property event 'cue-label #f))
                 (mark (ly:event-property event 'timing-label #f)))

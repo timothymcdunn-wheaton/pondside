@@ -696,3 +696,43 @@ detection.
 **Known limit:** a file with several `\score` blocks that have layouts
 restarts moments in each one. The dump should be pointed at the score
 the MIDI comes from.
+
+### M7 — the Lexicon (first part)
+
+**Built**
+
+- `PondsideLexicon` (portable):
+  - A TOML-subset reader: tables, dotted and quoted keys, all string
+    forms, numbers, booleans, multi-line arrays, inline tables.
+  - `LexiconEntry`: validation that reports every problem at once, so an
+    agent fixes an entry in one pass. Params keep their file order.
+  - The sound-expression language: `+ - * /`, parentheses, `min`/`max`,
+    nothing else. Its names are checked against the entry's params and
+    `beatDur`/`spanDur`/`tempo` when the entry loads.
+  - Scoped loading: core is bundled, user is
+    `~/Library/Application Support/Pondside/Lexicon` (or
+    `$XDG_DATA_HOME`, or `$PONDSIDE_LEXICON`), project is `Lexicon/`
+    beside the score. Later scopes win, and shadowed and broken entries
+    are reported.
+  - The tiers: `index.json` is tier 0, one line per entry; tier 1 is
+    entry.toml plus the README; tier 2 is impl.ily.
+- **Invocation.** `\lexicon "id" #'((param . value) …) music` comes from a
+  generated include file (`pondside lexicon include score.ly`). It holds
+  a dispatcher, each entry's defaults merged under the given params, the
+  implementations (each calls `pondside-lexicon-register!`), and, for
+  entries with a `[sound]`, a hidden `cue-label` text at the start. The
+  timing dump therefore sees the cue like any `\ecue`, and the sound
+  binding's cue lands in cues.json with no extra machinery.
+- **Static checking.** `pondside lexicon check score.ly` reports unknown
+  entries (with near matches), unknown params and out-of-range values,
+  by line, before LilyPond runs.
+- **Core entries:** `niente-hairpin`, `timed-fermata` (the hidden-tempo
+  hold, packaged), `air-tone` (with a sound binding) and
+  `feathered-beam`. All of them compile on 2.24.3, and the timing of
+  `timed-fermata` plus the `air-tone` cue was checked against a real
+  dump.
+
+**Not yet:** the browser pane, promotion, preview rendering, MCP
+resources (they come with M6), `\pondsideLexiconLock`, and evaluating
+sound params into cues.json (`soundParams` exists; the cue sheet needs the
+span length from the dump).

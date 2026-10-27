@@ -22,13 +22,14 @@ var targets: [Target] = [
     .target(name: "PondsideCore"),
     .target(name: "PondsideEngrave", dependencies: ["PondsideCore", "PondsideTiming"]),
     .target(name: "PondsideTiming", dependencies: ["PondsideCore"]),
-    .target(name: "PondsideLexicon", dependencies: ["PondsideCore"]),
+    .target(name: "PondsideLexicon", dependencies: ["PondsideCore"], resources: [.copy("Core")]),
     .target(name: "PondsideBridge", dependencies: ["PondsideCore", "PondsideEngrave", "PondsideTiming", "PondsideLexicon"]),
-    .executableTarget(name: "PondsideCLI", dependencies: ["PondsideCore", "PondsideEngrave", "PondsideTiming", "PondsideBridge"]),
+    .executableTarget(name: "PondsideCLI", dependencies: ["PondsideCore", "PondsideEngrave", "PondsideTiming", "PondsideLexicon", "PondsideBridge"]),
 
     // Shared real-world scores live in Tests/Scores and are read by path.
     .testTarget(name: "PondsideCoreTests", dependencies: ["PondsideCore"]),
     .testTarget(name: "PondsideTimingTests", dependencies: ["PondsideTiming"]),
+    .testTarget(name: "PondsideLexiconTests", dependencies: ["PondsideLexicon", "PondsideEngrave"]),
     .testTarget(name: "PondsideEngraveTests", dependencies: ["PondsideEngrave"], resources: [.copy("Fixtures")]),
 ]
 

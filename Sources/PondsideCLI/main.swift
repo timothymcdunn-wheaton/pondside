@@ -2,6 +2,7 @@ import Foundation
 import PondsideCore
 import PondsideEngrave
 import PondsideTiming
+import PondsideLexicon
 
 // `pondside` — the headless command-line surface. Links only portable
 // modules, so it runs on any platform Swift does.
@@ -27,6 +28,11 @@ commands:
       Create or update a SuperCollider file with one handler per cue. New
       cues get stubs; cues that left the score are commented out; code
       inside a handler is never changed.
+  lexicon list | show <id> | impl <id> | check <file.ly> | include <file.ly> [--project <dir>]
+      The Lexicon in three tiers: list is tier 0 (index.json), show is
+      tier 1 (entry.toml and README), impl is tier 2 (the implementation).
+      check finds \\lexicon uses with unknown entries or bad params; include
+      writes the settings file that defines \\lexicon for a score.
   timeline <file.ly> [--json]
       The tempo map: each tempo step's moment, seconds and quarter notes per minute.
   watch <file> --on-change <command>
@@ -269,6 +275,41 @@ func handlers(_ args: Arguments) async throws -> Int32 {
     return 0
 }
 
+func lexiconCommand(_ args: Arguments) throws -> Int32 {
+    guard let sub = args.positional.first else { throw CLIError("lexicon needs list, show, impl, check or include") }
+    let target = args.positional.dropFirst().first
+    let scoreDir = target.flatMap { t -> URL? in
+        t.hasSuffix(".ly") || t.hasSuffix(".ily") ? URL(fileURLWithPath: t).deletingLastPathComponent() : nil
+    }
+    let project = args.options["project"].map { URL(fileURLWithPath: $0) } ?? scoreDir
+        ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    let lex = Lexicon.load(Lexicon.standardScopes(project: project))
+    for p in lex.problems { printErr("lexicon: \(p)") }
+    switch sub {
+    case "list":
+        print(lex.indexJSON(), terminator: "")
+    case "show", "impl":
+        guard let id = target else { throw CLIError("lexicon \(sub) needs an entry id") }
+        guard let text = sub == "show" ? lex.tier1(id) : lex.tier2(id) else { throw CLIError("no Lexicon entry \(id)") }
+        print(text, terminator: text.hasSuffix("\n") ? "" : "\n")
+    case "check", "include":
+        guard let path = target else { throw CLIError("lexicon \(sub) needs a score") }
+        let text = try String(contentsOf: URL(fileURLWithPath: path), encoding: .utf8)
+        if sub == "check" {
+            let problems = lex.check(text)
+            for p in problems { print("\(path):\(p.line): \(p.message)") }
+            return problems.isEmpty ? 0 : 1
+        }
+        let used = Set(LexiconUse.find(in: text).map(\.id))
+        let out = args.options["out"] ?? URL(fileURLWithPath: path).deletingLastPathComponent().appendingPathComponent("lexicon.ily").path
+        try Data(lex.includeFile(for: used).utf8).write(to: URL(fileURLWithPath: out), options: .atomic)
+        print("wrote \(out) for \(used.count) entr\(used.count == 1 ? "y" : "ies")")
+    default:
+        throw CLIError("unknown lexicon command '\(sub)'")
+    }
+    return 0
+}
+
 func timeline(_ args: Arguments) async throws -> Int32 {
     let sheet = try await cueSheet(args)
     if args.flags.contains("json") {
@@ -308,6 +349,7 @@ do {
     case "cues": status = try await cues(args)
     case "timeline": status = try await timeline(args)
     case "handlers": status = try await handlers(args)
+    case "lexicon": status = try lexiconCommand(args)
     case "version", "--version": print("pondside 0.1.0 (M1)"); status = 0
     case "help", "--help", "-h": print(usage); status = 0
     default:

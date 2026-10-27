@@ -1,0 +1,17 @@
+schema   = 1
+id       = "niente-hairpin"
+version  = "1.0.0"
+gloss    = "Hairpins to or from nothing: circled tips on every hairpin in the music"
+tags     = ["dynamics", "hairpin", "niente"]
+kind     = "symbol"
+lilypond = ">=2.24"
+license  = "CC0-1.0"
+
+[entry]
+command   = "\\lexicon \"niente-hairpin\" #'() { c'2\\> c'2\\! }"
+attaches  = "span"
+music-arg = true
+
+[files]
+impl   = "impl.ily"
+readme = "README.md"

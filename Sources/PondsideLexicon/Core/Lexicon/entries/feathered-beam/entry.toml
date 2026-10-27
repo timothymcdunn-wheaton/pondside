@@ -1,0 +1,23 @@
+schema   = 1
+id       = "feathered-beam"
+version  = "1.0.0"
+gloss    = "Feathered beams over beamed groups: accelerando or ritardando"
+tags     = ["beam", "rhythm", "accelerando", "contemporary"]
+kind     = "symbol"
+lilypond = ">=2.24"
+license  = "CC0-1.0"
+
+[entry]
+command   = "\\lexicon \"feathered-beam\" #'((direction . \"rit\")) { c''16[ c'' c'' c'' c'' c''] }"
+attaches  = "span"
+music-arg = true
+
+[params.direction]
+type    = "enum"
+values  = ["accel", "rit"]
+default = "accel"
+doc     = "accel: beams spread to the right (faster); rit: they converge"
+
+[files]
+impl   = "impl.ily"
+readme = "README.md"

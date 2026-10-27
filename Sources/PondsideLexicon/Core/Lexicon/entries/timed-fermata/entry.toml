@@ -1,0 +1,33 @@
+schema   = 1
+id       = "timed-fermata"
+version  = "1.0.0"
+gloss    = "A fermata that lasts exactly N seconds in playback and cue times"
+tags     = ["fermata", "timing", "playback", "electronics"]
+kind     = "gesture"
+lilypond = ">=2.24"
+license  = "CC0-1.0"
+
+[entry]
+command   = "\\lexicon \"timed-fermata\" #'((seconds . 6) (resume . 72)) { g'1 }"
+attaches  = "span"
+music-arg = true
+
+[params.seconds]
+type    = "float"
+default = 4.0
+min     = 0.25
+max     = 600.0
+unit    = "seconds"
+doc     = "How long the held music lasts"
+
+[params.resume]
+type    = "float"
+default = 60.0
+min     = 10.0
+max     = 400.0
+unit    = "quarter notes per minute"
+doc     = "The tempo after the hold (restated, hidden, where the music ends)"
+
+[files]
+impl   = "impl.ily"
+readme = "README.md"
