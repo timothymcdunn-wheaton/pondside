@@ -481,3 +481,83 @@ What the corpus taught the edit model, beyond the plan:
   inserting a pitch before pitchless rhythm. Neither can be made
   meaning-preserving in writing, so the editor declines rather than
   guessing.
+
+### M2.1 — real multi-file scores (from first real-world use)
+
+**Do this before mouse entry.** On the first real piece opened in the app,
+score editing did nothing. Clicking a note drew no highlight, and `a`–`g`
+inserted nothing. The piece is a flute score migrated from Dorico with
+musicxml2ly, and its `score.ly` only `\include`s the parts that hold
+content: definitions, the flute music, graphics, electronics and timing.
+There were two causes:
+
+1. **`\pointAndClickOff` in an included file.** musicxml2ly writes it at
+   the top of its output. LilyPond then emits no `textedit://` links for
+   that music, the hit-test finds nothing, and `canvas(_:didClick:)`
+   silently clears the selection.
+2. **Only the opened file is editable.** Even with links, a glyph from
+   `flute.ly` only flashes "That object comes from flute.ly:N". The opened
+   file holds no notes, so there is nothing to edit.
+
+#### A. Neutralize `\pointAndClickOff` at compile time
+
+| Option | Verdict |
+|---|---|
+| Comment the line out while the file is open, and restore it on close | ✗ Mutates the user's file. A crash or force-quit leaves it changed, and autosave, the watcher, git and other tools all see the edit. It breaks "the file is the only state". |
+| Edit a temp copy, merge back on save, skip the comment-out | ✗ Relative `\include`s and the links' embedded paths point at the copy, so every link needs remapping. It adds a second merge path, and the special exception will rot. |
+| **Override it in an injected settings file** | ✓ No file is touched and nothing can be left behind. Links carry the real paths. |
+
+Do what `EventDump` already does (`-dinclude-settings`, see
+`Sources/PondsideEngrave/EventDump.swift`) in `LilyPondEngraver` for
+**interactive SVG compiles only**. The injected `pondside-session.ily`
+redefines `pointAndClickOff` as a no-op and makes `pointAndClickTypes`
+permissive. PDF export keeps `-dno-point-and-click` and the leak scan,
+unchanged.
+
+- **Spike first** (2.24 and 2.26): does a definition in an
+  `include-settings` file shadow `\pointAndClickOff` for music in the
+  user's included files? If not, the settings file should wrap
+  `ly:set-option` so that it ignores `'point-and-click #f`. That also
+  catches a raw `#(ly:set-option 'point-and-click #f)`.
+- **Test:** an integration fixture whose included music file starts with
+  `\pointAndClickOff`. Assert that its graphics are linked.
+
+#### B. Diagnose, never fail silently
+
+- After a compile, if a file contributed notes but no links, say so in
+  the status line and name the file.
+- A click on unlinked music should explain itself, not silently deselect.
+
+#### C. Edit across `\include`
+
+- **The root:** the opened file stays the engraved root.
+- **The include graph:** resolve `\include` strings with LilyPond's rules
+  (relative includes, `-I`, the root's directory). Cross-check against the
+  links, which already carry every glyph's real path.
+- **Following a click:** clicking a glyph from another file switches the
+  source pane to that file (tabs or a file picker). Note input,
+  `ScoreEditor`, undo, autosave and the external-merge watcher then all
+  work on that file's text and `SyntaxTree`. The source → score highlight
+  works from any file in the graph.
+- **Recompiling:** every file in the graph is watched. A change to any of
+  them recompiles the root.
+- **Data model:** generalize `ScoreDocument`, `EngravingMap` and
+  `linkOffsets` from one path to per-file state keyed by the canonical
+  path. `PathMatching` already handles symlinks.
+- **Undo:** one stack per file, as in text editors. A score edit lands on
+  the stack of the file it changed.
+- **Acceptance:** a multi-file fixture in `Tests/Scores`:
+  - The files: a root, a `defs.ily`, a music file that starts with
+    `\pointAndClickOff`, and a file of Scheme and markup only.
+  - Clicking a note in the included music file selects it, `c` inserts
+    into that file, `⌘Z` undoes, and the root re-engraves.
+  - The opened root file is untouched throughout.
+
+#### D. README
+
+The README's "Status: M1" section is stale. Describe score-view editing,
+the key table from `NoteInput`, and the fact that included files are
+editable.
+
+**Order:** A and B first. They are small and immediately restore
+highlighting on real scores. C comes next, and mouse entry after it.
