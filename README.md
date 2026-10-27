@@ -89,7 +89,7 @@ Keys are LilyPond wherever LilyPond has an answer.
 | `⌫` | delete |
 | `⎋` | cancel / deselect / disarm |
 | click a staff | with a duration armed: place a note there |
-| `Space` | leader: chords such as `␣ a s` (slur), `␣ g e` (next error), `␣ ␣` (palette) |
+| `Space` | leader: chords such as `␣ a s` (slur), `␣ g e` (next error), `␣ g c` (go to cue), `␣ ␣` (palette) |
 | `⏎` | edit in source |
 | `⌘J` | switch between score and source |
 | `⌘⇧]` `⌘⇧[` | next / previous file |
