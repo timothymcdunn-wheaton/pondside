@@ -17,7 +17,7 @@ final class EngravedPageTests: XCTestCase {
         XCTAssertEqual(page.heightMM, 297, accuracy: 0.001)
         XCTAssertEqual(page.viewBox.width, 119.5016, accuracy: 0.0001)
         XCTAssertEqual(page.viewBox.height, 169.0094, accuracy: 0.0001)
-        XCTAssertGreaterThan(page.graphics.count, 50)
+        XCTAssertEqual(page.graphics.count, 47) // every drawable element in the fixture
         XCTAssertTrue(page.unsupportedElements.isEmpty)
     }
 

@@ -7,7 +7,7 @@ import PondsideEngrave
 /// bidirectional point-and-click between them.
 @MainActor
 final class DocumentWindowController: NSWindowController, NSWindowDelegate {
-    let document: ScoreDocument
+    let score: ScoreDocument
     private let editor = SourceEditorView(frame: .zero)
     private let canvas = ScoreCanvasView(frame: .zero)
     private let canvasScroll = NSScrollView()
@@ -27,7 +27,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     }
 
     init(document: ScoreDocument) {
-        self.document = document
+        self.score = document
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1440, height: 900),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: false)
@@ -37,14 +37,14 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
         window.title = document.url.lastPathComponent
         window.representedURL = document.url
         window.minSize = NSSize(width: 640, height: 400)
-        _ = window.setFrameAutosaveName("Pondside.\(document.url.path)")
+        _ = window.setFrameAutosaveName("Pondside.\(score.url.path)")
         super.init(window: window)
         window.delegate = self
         buildLayout()
         wire()
-        editor.load(document.text)
-        document.delegate = self
-        document.open()
+        editor.load(score.text)
+        score.delegate = self
+        score.open()
         updateStatus()
         if !window.setFrameUsingName(window.frameAutosaveName) { window.center() }
     }
@@ -99,7 +99,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
         canvas.delegate = self
         canvas.onZoomChange = { [weak self] _ in self?.updateStatus() }
         editor.onUserEdit = { [weak self] text in
-            self?.document.userEdited(text)
+            self?.score.userEdited(text)
         }
         editor.onSelectionChange = { [weak self] range in
             self?.editorSelectionChanged(range)
@@ -110,7 +110,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
 
     private func select(positions: [SourcePosition], inEditor: Bool) {
         selection = positions.sorted()
-        canvas.highlight(Set(selection), path: document.url.path, scrollToVisible: !scoreIsDriving)
+        canvas.highlight(Set(selection), path: score.url.path, reveal: !scoreIsDriving)
         guard inEditor, let first = selection.first, let last = selection.last else { return }
         let source = SourceText(editor.text)
         guard let start = source.index(of: first), let lastStart = source.index(of: last) else { return }
@@ -130,7 +130,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
         let start = source.position(of: source.index(utf16Offset: range.location))
         if range.length == 0 {
             // The caret is "on" the linked token whose extent covers it.
-            let candidates = document.linkedPositions.filter { $0.line == start.line && $0.character <= start.character }
+            let candidates = score.linkedPositions.filter { $0.line == start.line && $0.character <= start.character }
             if let p = candidates.last, let i = source.index(of: p),
                source.string.unicodeScalars.distance(from: i, to: LilyLexing.tokenRange(in: source.string, at: i).upperBound) + p.character >= start.character {
                 selection = [p]
@@ -139,26 +139,26 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
             }
         } else {
             let end = source.position(of: source.index(utf16Offset: range.location + range.length))
-            selection = document.linkedPositions.filter { $0 >= start && $0 < end }
+            selection = score.linkedPositions.filter { $0 >= start && $0 < end }
         }
-        canvas.highlight(Set(selection), path: document.url.path, scrollToVisible: true)
+        canvas.highlight(Set(selection), path: score.url.path, reveal: true)
         updateHints()
     }
 
     // MARK: Status
 
     private func updateStatus() {
-        let lily = document.installation.map { "LilyPond \($0.version)" } ?? "LilyPond —"
+        let lily = score.installation.map { "LilyPond \($0.version)" } ?? "LilyPond —"
         var note: String?
-        if let declared = document.declaredVersion, let v = document.installation?.version, declared != v {
+        if let declared = score.declaredVersion, let v = score.installation?.version, declared != v {
             note = "Score declares \(declared); compiling with \(v)"
         }
-        statusBar.set(status: document.status, detail: firstErrorText(), zoom: canvas.zoom, toolchain: lily, note: note)
+        statusBar.set(status: score.status, detail: firstErrorText(), zoom: canvas.zoom, toolchain: lily, note: note)
         updateHints()
     }
 
     private func firstErrorText() -> String? {
-        guard let d = document.diagnostics.first(where: { $0.severity == .error || $0.severity == .fatal }) else { return nil }
+        guard let d = score.diagnostics.first(where: { $0.severity == .error || $0.severity == .fatal }) else { return nil }
         if let line = d.line { return "line \(line): \(d.message)" }
         return d.message
     }
@@ -170,13 +170,13 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
         } else {
             hints = ["←/→ previous/next object", "⌘J edit in source", "Esc clear selection"]
         }
-        if case .errors = document.status { hints.insert("Errors are underlined in the source", at: 0) }
+        if case .errors = score.status { hints.insert("Errors are underlined in the source", at: 0) }
         statusBar.setHints(Array(hints.prefix(3)))
     }
 
     private func showDiagnostics() {
         let source = SourceText(editor.text)
-        let ranges: [(NSRange, NSColor)] = document.diagnostics.compactMap { d in
+        let ranges: [(NSRange, NSColor)] = score.diagnostics.compactMap { d in
             guard let p = d.position(in: source), let i = source.index(of: p) else { return nil }
             let end = LilyLexing.tokenRange(in: source.string, at: i).upperBound
             let loc = source.utf16Offset(of: i)
@@ -206,8 +206,8 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
         guard let window else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.pdf]
-        panel.nameFieldStringValue = document.url.deletingPathExtension().lastPathComponent + ".pdf"
-        panel.directoryURL = document.url.deletingLastPathComponent()
+        panel.nameFieldStringValue = score.url.deletingPathExtension().lastPathComponent + ".pdf"
+        panel.directoryURL = score.url.deletingLastPathComponent()
         panel.beginSheetModal(for: window) { [weak self] response in
             guard let self, response == .OK, let dest = panel.url else { return }
             Task { @MainActor in await self.runExport(to: dest) }
@@ -217,7 +217,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     private func runExport(to dest: URL) async {
         statusBar.flash("Exporting PDF…")
         do {
-            try await document.exportPDF(to: dest)
+            try await score.exportPDF(to: dest)
             statusBar.flash("Exported \(dest.lastPathComponent) — no local paths embedded")
         } catch {
             let alert = NSAlert(error: error)
@@ -226,18 +226,18 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc func revealInFinder(_ sender: Any?) {
-        NSWorkspace.shared.activateFileViewerSelecting([document.url])
+        NSWorkspace.shared.activateFileViewerSelecting([score.url])
     }
 
     // MARK: NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
-        document.close()
+        score.close()
         (NSApp.delegate as? PondsideAppDelegate)?.windowDidClose(self)
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
-        document.revalidate()
+        score.revalidate()
     }
 }
 
@@ -248,7 +248,7 @@ extension DocumentWindowController: ScoreCanvasDelegate {
             updateHints()
             return
         }
-        guard PathMatching.same(link.path, document.url.path) else {
+        guard PathMatching.same(link.path, score.url.path) else {
             statusBar.flash("That object comes from \((link.path as NSString).lastPathComponent):\(link.line)")
             return
         }
@@ -263,17 +263,17 @@ extension DocumentWindowController: ScoreCanvasDelegate {
     }
 
     func canvas(_ canvas: ScoreCanvasView, didSelect links: [PointAndClickLocation]) {
-        let mine = links.filter { PathMatching.same($0.path, document.url.path) }.map(\.position)
+        let mine = links.filter { PathMatching.same($0.path, score.url.path) }.map(\.position)
         guard let lo = mine.min(), let hi = mine.max() else { return }
         scoreIsDriving = true
         // A rectangle selects the contiguous source span it covers.
-        select(positions: document.linkedPositions.filter { $0 >= lo && $0 <= hi }, inEditor: true)
+        select(positions: score.linkedPositions.filter { $0 >= lo && $0 <= hi }, inEditor: true)
         scoreIsDriving = false
         updateHints()
     }
 
     func canvas(_ canvas: ScoreCanvasView, moveSelectionBy step: Int) {
-        let all = document.linkedPositions
+        let all = score.linkedPositions
         guard !all.isEmpty else { return }
         let next: SourcePosition
         if step > 0 {
@@ -301,14 +301,14 @@ extension DocumentWindowController: ScoreDocumentDelegate {
         }
         pendingConflict = diskText
         let alert = NSAlert()
-        alert.messageText = "\(document.url.lastPathComponent) changed on disk while you were typing"
+        alert.messageText = "\(score.url.lastPathComponent) changed on disk while you were typing"
         alert.informativeText = "Another program edited the file. Whichever version you don't keep is saved to ~/Library/Application Support/Pondside/Recovery, so nothing is lost."
         alert.addButton(withTitle: "Use the File on Disk")
         alert.addButton(withTitle: "Keep My Edits")
         alert.beginSheetModal(for: window) { [weak self] response in
             guard let self, let disk = self.pendingConflict else { return }
             self.pendingConflict = nil
-            self.document.resolveConflict(keepMine: response == .alertSecondButtonReturn, diskText: disk)
+            self.score.resolveConflict(keepMine: response == .alertSecondButtonReturn, diskText: disk)
         }
     }
 
@@ -318,9 +318,9 @@ extension DocumentWindowController: ScoreDocumentDelegate {
 
     func documentDidEngrave(_ document: ScoreDocument) {
         let first = canvas.pages.isEmpty
-        canvas.setPages(document.pages)
+        canvas.setPages(score.pages)
         if first { canvas.fitWidth() }
-        canvas.highlight(Set(selection), path: document.url.path, scrollToVisible: false)
+        canvas.highlight(Set(selection), path: score.url.path, reveal: false)
         showDiagnostics()
         updateStatus()
     }

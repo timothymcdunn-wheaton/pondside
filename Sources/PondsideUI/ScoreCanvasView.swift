@@ -121,7 +121,7 @@ final class ScoreCanvasView: NSView {
 
     /// Highlights every graphic produced by the given source positions.
     /// The highlight is an overlay; the music itself is never recoloured.
-    func highlight(_ positions: Set<SourcePosition>, path: String?, scrollToVisible: Bool) {
+    func highlight(_ positions: Set<SourcePosition>, path: String?, reveal: Bool) {
         var firstRect: NSRect?
         var sameFile: [String: Bool] = [:]
         for v in pageViews {
@@ -139,7 +139,7 @@ final class ScoreCanvasView: NSView {
                 firstRect = convert(v.viewRect(for: r), from: v)
             }
         }
-        if scrollToVisible, let r = firstRect, !visibleRect.contains(r) {
+        if reveal, let r = firstRect, !visibleRect.contains(r) {
             scrollToVisible(r.insetBy(dx: -80, dy: -80))
         }
     }

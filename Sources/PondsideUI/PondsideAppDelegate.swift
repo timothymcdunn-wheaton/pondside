@@ -45,7 +45,7 @@ final class PondsideAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemVali
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationWillTerminate(_ notification: Notification) {
-        controllers.forEach { $0.document.flushPendingSave() }
+        controllers.forEach { $0.score.flushPendingSave() }
     }
 
     func windowDidClose(_ controller: DocumentWindowController) {
@@ -56,7 +56,7 @@ final class PondsideAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemVali
 
     func open(_ url: URL) {
         let url = url.standardizedFileURL
-        if let existing = controllers.first(where: { $0.document.url == url }) {
+        if let existing = controllers.first(where: { $0.score.url == url }) {
             existing.showWindow(nil)
             return
         }
