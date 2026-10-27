@@ -565,9 +565,8 @@ highlighting on real scores. C comes next, and mouse entry after it.
 #### M2.1 — what was built, and where it departs from the plan
 
 - **A.** The spike showed that redefining `pointAndClickOff` in the
-  settings file does **not** reach music in the user's files: their
-  `\pointAndClickOff` is looked up after the settings file is read and
-  resolves to the built-in. So `pondside-session.ily` wraps
+  settings file does **not** reach music in the user's files (observed;
+  the mechanism wasn't investigated). So `pondside-session.ily` wraps
   `ly:set-option` and ignores any `'point-and-click` value other than
   `#t`. That neutralizes `\pointAndClickOff`, `\pointAndClickTypes` and
   raw `ly:set-option` calls. Verified on 2.24.3 only; 2.26 still needs a
