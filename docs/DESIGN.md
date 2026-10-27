@@ -1,9 +1,10 @@
 # Pondside — design proposal
 
-Status: **M1 in progress.** This document answers the four questions asked
-before code (module structure, tree-sitter approach, `entry.toml`, `cues.json`)
-and lists the places where I think the brief is wrong, unachievable, or
-over-specified. Decisions marked **(proposed)** want a yes/no from you.
+Status: **M1 done, M2 in progress.** This document answers the four
+questions asked before code (module structure, grammar approach,
+`entry.toml`, `cues.json`) and lists the places where I think the brief is
+wrong, unachievable, or over-specified. Proposals 1–6 in §5 were accepted on
+2026-10-27; the rest are still open.
 
 ---
 
@@ -15,10 +16,8 @@ over-specified. Decisions marked **(proposed)** want a yes/no from you.
  PondsideCore    │  stdlib only — not even Foundation. SourceText (line index, LilyPond     │
                  │  coordinates ↔ String.Index ↔ UTF-16), PointAndClickLocation,            │
                  │  TextDiff (minimal replacement), DiskSync, LilyPondVersion.              │
-                 │  M2 adds: CST wrapper, edit model, selection model, undo log.            │
-                 │                                                                          │
- PondsideSyntax  │  (M2) tree-sitter runtime + LilyPond and Scheme grammars as C targets,  │
-                 │  wrapped in Swift. Depends on Core. Portable C, builds on Linux.         │
+                 │  M2: lossless CST + parser (Syntax/), pitch/duration model (Music/),     │
+                 │  ScoreEditor, NoteInput, EngravingMap (Editing/).                        │
                  │                                                                          │
  PondsideEngrave │  Toolchain detection, LilyPond driver (process today, daemon in M4),     │
                  │  diagnostics parser, SVG → EngravedPage scene model (geometry +          │
@@ -47,72 +46,96 @@ Departures from the brief's diagram, and why:
 - **Geometry and the scene model live in Engrave, not UI.** Hit-testing,
   link lookup and bounds are pure, so they're portable and tested on Linux.
   The UI only turns paths into `CGPath` and draws them.
-- **A separate `PondsideSyntax`.** tree-sitter is C. Keeping it out of Core
-  means Core stays a stdlib-only Swift module that compiles anywhere in
-  seconds, and the C build lives in one place.
+- **The CST lives in Core.** With a pure-Swift parser (§2) there is no C
+  build to isolate, so the brief's placement stands.
 
 ---
 
-## 2. Tree-sitter grammar approach
+## 2. The concrete syntax tree
 
-**Start by evaluating the grammars that already exist** (there is at least
-one community `tree-sitter-lilypond` plus a companion Scheme grammar). Two
-gates: (a) it round-trips the LilyPond regression suite with zero `ERROR`
-nodes in files LilyPond itself accepts, and (b) its tokens line up with
-point-and-click locations. If it passes, vendor it and contribute fixes
-upstream. If not, write our own along the lines below. In both cases it's
-pinned as a C target in `PondsideSyntax`.
+### Decision: a hand-written lossless parser, not tree-sitter
+
+The brief asks for a tree-sitter grammar. I built the CST as a pure-Swift
+recursive-descent parser instead (`Sources/PondsideCore/Syntax`), because:
+
+- **The hard part would be hand-written anyway.** LilyPond's tokenization
+  depends on mode (`\lyricmode`, `\chordmode`, `\markup`, Scheme with
+  embedded `#{ #}`), which tree-sitter can only express through a
+  hand-written C external scanner.
+- **The edit model needs semantics the parser can compute for free.**
+  Relative octaves, inherited durations, key and note-name language are all
+  resolved by LilyPond *lexically* (verified, §6). A single parser pass
+  computes them exactly; a tree-sitter tree would need a second pass doing
+  the same walk.
+- **The seam stays clean.** No C target, nothing to build per platform, and
+  Core still imports nothing but the Swift standard library.
+- **Speed is not a reason to prefer tree-sitter at our sizes.** A full
+  re-parse of a large score is fast enough to run on every keystroke.
+  Incremental reparsing can come later behind the same `SyntaxTree` API if
+  profiling ever asks for it.
+
+What tree-sitter would still be good for is highlighting in *other*
+editors (Helix, Neovim, Zed). That is worth a separate, optional grammar
+later, and it would never be the source of truth for Pondside's edits.
 
 ### Design principle: structure without meaning
 
-The brief's warning is right and decides everything here: LilyPond's arity
-and even its lexing can be changed from Scheme at runtime. So the grammar:
+LilyPond can redefine arity and even lexing from Scheme at runtime, so the
+parser:
 
-1. **Never encodes arity.** `\foo a b c` parses as a command followed by a
-   flat sequence of items. Whether `\foo` takes 0, 1 or 3 arguments is known
-   only to the compiler. The CST is a token stream with bracket structure,
-   not an AST.
-2. **Models what is lexically fixed:** comments (`%`, `%{ %}`), strings,
-   numbers, `\commands`, notes (pitch + octave marks + `!`/`?` + duration +
-   dots + `*n/m` multipliers), chords `< >`, simultaneous `<< >>`,
-   sequential `{ }`, post-events (`-.`, `^"x"`, `(`, `)`, `~`, `\f`, …),
-   bar checks, top-level assignments, `\header`/`\paper`/`\layout` blocks,
-   and **Scheme** after `#`/`$` via injection into the Scheme grammar.
-3. **Uses an external scanner for modes.** `\lyricmode`, `\lyrics`,
-   `\addlyrics`, `\chordmode`, `\figuremode`, `\drummode` and `\markup` change
-   tokenization of the next block. The scanner tracks a mode stack keyed on
-   the keyword that preceded `{`. Unknown user-defined mode switches fall
-   back to note mode. When that's wrong, the result is an `ERROR` node local
-   to that block, and the daemon is still the truth.
-4. **Recovers from errors.** tree-sitter's error recovery is why we use it.
-   An unbalanced brace while typing must not invalidate the rest of the
-   file's structure.
+1. **Never encodes arity.** `\foo a b c` is a command followed by a flat
+   sequence of items. The CST is a token stream with bracket structure, not
+   an AST.
+2. **Models what is lexically fixed:** comments, strings, numbers,
+   `\commands`, notes (pitch, octave marks, `!`/`?`, octave check), durations
+   (dots, `*n/m`), chords, `<< >>`, `{ }`, post-events, assignments,
+   property paths, context specs, and Scheme datums, which are opaque except
+   for their extent and any embedded music.
+3. **Tracks modes** the way LilyPond's lexer does: pending mode set by
+   `\lyricmode` etc., consumed by the next block, with `\markup` handled as an
+   inline expression up to its first word, string or block.
+4. **Never fails.** Stray closers and unterminated blocks are recovered
+   and reported in `SyntaxTree.issues`. Every byte belongs to exactly one
+   leaf, so `tree.reconstructed == text` always holds, and the tests assert
+   it for every file in the corpus.
+
+The only built-in knowledge is in `KnownCommands`: which bare commands
+attach as post-events, which take pitch arguments, which switch modes. All
+of it concerns attachment, never meaning. A score that redefines one of
+these still round-trips byte for byte.
 
 ### How edits use it
 
-The CST is consulted to *locate* the bytes to change. It is never re-printed.
-A graphical edit is:
+Edits never re-print the tree. `ScoreEditor` turns an intention into a list
+of `TextEdit`s (byte range → replacement) over the exact characters
+involved. Two kinds of compensation keep *other* notes unchanged:
 
-```
-selection (point-and-click position) → CST leaf → semantic sub-token
-(e.g. the octave marks of a note) → (byte range, replacement) → apply
-```
-
-Text outside the range is never touched, so formatting, comments and
-whitespace survive by construction, not by care. `TextDiff` and
-`UTF16Replacement` (M1) are the primitives this builds on.
+- **Octave marks.** In `\relative` mode, moving a note changes the reference
+  for the next note in the chain. The editor rewrites the marks of exactly
+  the notes whose reference changed, so their absolute pitch is preserved.
+  For example, raising `d` in `\relative c' { c d e f }` gives `c d' e, f`.
+- **Inherited durations.** Changing a note's duration would change every
+  following note that inherits it. The editor writes the old value on the
+  first inheriting note: `{ c'4 d' e' }` → `{ c'4 d'8 e'4 }`.
 
 ### The round-trip proof (M2 acceptance)
 
-- **Corpus:** LilyPond's own `input/regression` (~1,500 files) plus a
-  Mutopia sample. Test-only, never shipped.
-- **Property test:** for each file, apply 1,000 random graphical edits
-  (transpose, change duration, add/remove articulation, insert/delete note).
-  After each edit, assert: (1) bytes outside the edit range are identical;
-  (2) re-parsing yields the same tree outside the edited subtree; (3)
-  applying the inverse edit restores the file byte-for-byte.
-- **Oracle check:** for a subset, compile before and after with LilyPond and
-  diff the event dump. A transpose of one note must change exactly one event.
+- **Property tests** (`RoundTripPropertyTests`): 1,000 random graphical
+  edits per real-world score (moves, durations, dots, slurs and
+  articulations, inserts, deletes), each checked for:
+  - **locality:** only the target event, other notes' octave marks, and
+    pure insertions at duration slots change;
+  - **semantics:** every non-target note keeps its absolute pitch and every
+    non-target event keeps its duration;
+  - **losslessness;**
+  - **reversibility:** the inverse edits restore the original byte for byte.
+- **Corpus:** LilyPond's own regression suite and snippet collection
+  (~2,300 files), lossless parse plus 20 random edits per file, in CI.
+- **Oracle** (`OracleTests`): an event listener compiled into LilyPond
+  (`EventDump`) reports every note's absolute pitch and duration. The model
+  must agree on every note of every score, before and after random edits.
+  With the property tests, that means an edit never changes a non-target
+  note *as LilyPond reads it*.
 
 ---
 
@@ -246,7 +269,8 @@ Notes:
 
 ## 5. Where I think the brief is wrong, unachievable, or over-specified
 
-Ordered by consequence.
+Ordered by consequence. **1–6 accepted** (2026-10-27), with #3 left open to
+creative solutions.
 
 1. **LilyPond has no MusicXML export.** The mockup path "export MusicXML
    from LilyPond, invoke `mscore`" doesn't exist. `musicxml2ly` only imports,
@@ -370,9 +394,31 @@ These are pinned in tests so a LilyPond upgrade that changes them fails loudly:
 - Point-and-click is on by default. Export passes `-dno-point-and-click`
   explicitly and then scans the output.
 
+Music semantics, measured with the `EventDump` listener (and encoded in
+`SemanticsTests`):
+
+- **The `\relative` chain is purely lexical.** It runs across `<< >>` voices
+  (the second voice continues from the end of the first, and the note after
+  `>>` from the end of the last voice) and across `\repeat` alternatives.
+- **Chords:** members chain from one another, and the next event is relative
+  to the chord's **first** note.
+- **Isolation:** nested `\relative`, `\fixed` and `\absolute` are isolated;
+  the outer chain resumes as if they weren't there.
+- **`\transpose`'s pitch arguments** are written in absolute octaves but
+  become the chain's reference. `\key` and `\transposition` arguments do not.
+- **Octave checks** (`c=''`) pin the pitch to the checked octave, and the
+  chain continues from there.
+- **`\relative` with no start pitch** behaves as if relative to the F below
+  middle C, so the first note reads as absolute.
+- **The default duration is lexically global** (across blocks and lines)
+  and **includes multipliers**: `c'4*2 d'` gives `d'` a length of `4*2`.
+  Tuplets scale the sounding length but not the inherited written value.
+
 ---
 
-## 7. M1 scope and status
+## 7. Status
+
+### M1
 
 | M1 item | State |
 |---|---|
@@ -391,3 +437,16 @@ These are pinned in tests so a LilyPond upgrade that changes them fails loudly:
 Not in M1, on purpose: the CST (M2), the chord system and hover popovers
 (M3; M1 shows key equivalents in menus and the status line), and the
 daemon (M4).
+
+### M2
+
+| M2 item | State |
+|---|---|
+| CST (lossless, mode-aware, error-recovering) | ✅ `SyntaxTree`, `Parser`, `Lexer` |
+| Music model: absolute pitches, durations, keys, languages | ✅ computed in the parse; oracle-verified |
+| Score selection model | ✅ the text selection is the selection; chord members selectable alone |
+| Minimal-diff edits with compensation | ✅ `ScoreEditor` |
+| 1,000-edit round-trip proof on real scores | ✅ fixtures in `Tests/Scores`; LilyPond corpus in CI |
+| Keyboard note input | ✅ `NoteInput`: LilyPond durations and syntax as keys |
+| Unified undo across both views | ✅ score edits are text edits on the window's undo stack |
+| Mouse entry (click a staff position with a duration armed) | ⏳ needs staff-geometry hit-testing; next |
