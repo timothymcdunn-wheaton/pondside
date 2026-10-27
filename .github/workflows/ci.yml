@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  # The portability seam: every module below PondsideUI builds and passes its
+  # full test suite on Linux. A platform leak below the seam fails here.
+  linux:
+    runs-on: ubuntu-24.04
+    container: swift:6.1-noble
+    steps:
+      - uses: actions/checkout@v4
+      - name: Seam check
+        run: ./scripts/check-seam.sh
+      - name: Install LilyPond (integration tests)
+        run: apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq lilypond > /dev/null && lilypond --version | head -1
+      - name: Build
+        run: swift build --build-tests
+      - name: Test
+        run: swift test --skip-build
+
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: swift --version
+      - name: Build (all targets, including the app)
+        run: swift build --build-tests
+      - name: Test
+        run: swift test --skip-build
+      - name: Bundle app
+        run: ./scripts/make-app.sh debug
