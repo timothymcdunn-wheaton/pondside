@@ -2,6 +2,7 @@ import AppKit
 import PondsideCore
 import PondsideEngrave
 import PondsideTiming
+import PondsideLexicon
 
 enum CompileStatus: Equatable {
     case idle
@@ -354,7 +355,8 @@ final class ScoreDocument {
         compileRunning = false
         lastLog = outcome.result?.messages ?? outcome.error ?? ""
         if let result = outcome.result, result.succeeded {
-            cueSheet = CueSheet(log: result.timing, score: url.lastPathComponent)
+            let rate = (try? ProjectConfig.find(from: url))?.sampleRate ?? 48000
+            cueSheet = CueSheet(log: result.timing, score: url.lastPathComponent, sampleRate: rate)
         }
         if let result = outcome.result {
             for f in files {

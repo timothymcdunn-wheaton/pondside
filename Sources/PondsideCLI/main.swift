@@ -95,7 +95,9 @@ func printErr(_ s: String) {
 
 func resolveLilyPond(for source: URL?) async throws -> LilyPondInstallation {
     let installs = await ToolchainDetector().detectLilyPond()
-    let declared = source.flatMap { try? String(contentsOf: $0, encoding: .utf8) }.flatMap(LilyPondVersion.declared(in:))
+    // The project's pin (pondside.toml) wins over the score's \version.
+    let pinned = source.flatMap { try? ProjectConfig.find(from: $0) }?.lilypondVersion.flatMap { LilyPondVersion($0) }
+    let declared = pinned ?? source.flatMap { try? String(contentsOf: $0, encoding: .utf8) }.flatMap(LilyPondVersion.declared(in:))
     guard let chosen = ToolchainDetector.select(from: installs, for: declared) else {
         throw CLIError("no LilyPond found. Install it (e.g. `brew install lilypond`) or set PONDSIDE_LILYPOND.")
     }
@@ -243,10 +245,11 @@ func watch(_ args: Arguments) async throws -> Int32 {
 func cueSheet(_ args: Arguments) async throws -> CueSheet {
     let source = try sourceURL(args)
     let lily = try await resolveLilyPond(for: source)
+    let config = try ProjectConfig.find(from: source)
     let rate = try args.options["rate"].map { r -> Int in
         guard let v = Int(r), v > 0 else { throw CLIError("--rate needs a sample rate in Hz") }
         return v
-    } ?? 48000
+    } ?? config.sampleRate
     let log = try await TimingDump.run(lily, source: source)
     return CueSheet(log: log, score: source.lastPathComponent, sampleRate: rate)
 }
@@ -269,7 +272,10 @@ func cues(_ args: Arguments) async throws -> Int32 {
 }
 
 func handlers(_ args: Arguments) async throws -> Int32 {
-    guard let scd = args.options["scd"] else { throw CLIError("--scd <file> is required") }
+    let config = try ProjectConfig.find(from: try sourceURL(args))
+    guard let scd = args.options["scd"] ?? config.handlers?.path else {
+        throw CLIError("--scd <file> is required (or [supercollider] handlers in pondside.toml)")
+    }
     let sheet = try await cueSheet(args)
     for w in sheet.warnings { printErr("warning: \(w)") }
     let url = URL(fileURLWithPath: scd)
@@ -327,8 +333,9 @@ func lexiconCommand(_ args: Arguments) throws -> Int32 {
 func mockup(_ args: Arguments) async throws -> Int32 {
     let source = try sourceURL(args)
     let lily = try await resolveLilyPond(for: source)
-    let rate = Int(args.options["rate"] ?? "48000") ?? 48000
-    let only = try args.options["renderer"].map { r -> MockupRenderer.Renderer in
+    let config = try ProjectConfig.find(from: source)
+    let rate = args.options["rate"].flatMap { Int($0) } ?? config.sampleRate
+    let only = try (args.options["renderer"] ?? config.renderer).map { r -> MockupRenderer.Renderer in
         guard let v = MockupRenderer.Renderer(rawValue: r) else { throw CLIError("--renderer is musescore or fluidsynth") }
         return v
     }
@@ -344,7 +351,7 @@ func mockup(_ args: Arguments) async throws -> Int32 {
     }
     let out = URL(fileURLWithPath: args.options["out"]
         ?? source.deletingPathExtension().appendingPathExtension("wav").path)
-    let renderer = MockupRenderer(sampleRate: rate, soundFont: args.options["soundfont"].map { URL(fileURLWithPath: $0) })
+    let renderer = MockupRenderer(sampleRate: rate, soundFont: args.options["soundfont"].map { URL(fileURLWithPath: $0) } ?? config.soundFont)
     let (used, info) = try await renderer.render(midi: midi, to: out, only: only)
     print("\(out.path): \(String(format: "%.1f", info.seconds)) s at \(info.sampleRate) Hz via \(used.rawValue), peak \(String(format: "%.1f", 20 * log10(info.peak))) dBFS")
     return 0

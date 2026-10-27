@@ -40,7 +40,7 @@ var targets: [Target] = [
 products.append(.executable(name: "PondsideApp", targets: ["PondsideApp"]))
 dependencies.append(.package(url: "https://github.com/migueldeicaza/SwiftTerm", .upToNextMinor(from: "1.5.1")))
 targets += [
-    .target(name: "PondsideUI", dependencies: ["PondsideCore", "PondsideEngrave", "PondsideTiming", "PondsideBridge",
+    .target(name: "PondsideUI", dependencies: ["PondsideCore", "PondsideEngrave", "PondsideTiming", "PondsideLexicon", "PondsideBridge",
                                                .product(name: "SwiftTerm", package: "SwiftTerm")]),
     .executableTarget(name: "PondsideApp", dependencies: ["PondsideUI"]),
 ]

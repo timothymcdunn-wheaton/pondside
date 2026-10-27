@@ -281,11 +281,14 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
             for l in linkOffsets where l.offset >= a && l.offset < max(b, a + 1) { positions.insert(l.position) }
         }
         hasSelection = !positions.isEmpty
+        highlighted = positions
         canvas.highlight(positions, path: activeFile.url.path, reveal: reveal)
         updateHints()
     }
 
     private var hasSelection = false
+    /// The engraved positions currently highlighted (the selection's glyphs).
+    private var highlighted = Set<SourcePosition>()
 
     /// The current-text UTF-8 offset of a point-and-click link.
     private func currentOffset(of link: PointAndClickLocation) -> Int? {
@@ -367,7 +370,18 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
         let (events, notes) = targets()
         switch action {
         case .move(let move):
-            apply(scoreEditor.move(events: events, extraNotes: notes, by: move))
+            let moved = highlighted
+            let edit = scoreEditor.move(events: events, extraNotes: notes, by: move)
+            apply(edit)
+            // Instant feedback: a ghost at the new staff position until
+            // LilyPond's engraving lands (M4, provisional rendering).
+            if edit != nil {
+                switch move {
+                case .step(let n): canvas.provisionalShift(moved, path: activeFile.url.path, halfSpaces: n)
+                case .octave(let n): canvas.provisionalShift(moved, path: activeFile.url.path, halfSpaces: 7 * n)
+                case .chromatic: break
+                }
+            }
         case .setDuration(let d):
             if !events.isEmpty { apply(scoreEditor.setDuration(events: events, to: d)) }
             updateInputStatus()

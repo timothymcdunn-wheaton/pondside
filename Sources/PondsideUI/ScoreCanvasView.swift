@@ -182,6 +182,34 @@ final class ScoreCanvasView: NSView {
         v.ghost = Ghost(staff: staff, x: p.x, position: staff.position(ofY: p.y))
     }
 
+    /// Provisional rendering: ghost noteheads where the given notes are
+    /// moving, drawn until the next engraving replaces the pages. The music
+    /// itself is never redrawn or recoloured.
+    func provisionalShift(_ positions: Set<SourcePosition>, path: String, halfSpaces: Int) {
+        guard halfSpaces != 0 else { return }
+        for v in pageViews {
+            guard let page = v.rendered?.page else { continue }
+            var byPosition: [SourcePosition: [Graphic]] = [:]
+            for g in page.graphics {
+                guard let link = g.link, positions.contains(link.position), PathMatching.same(link.path, path) else { continue }
+                byPosition[link.position, default: []].append(g)
+            }
+            var ghosts = v.provisional
+            for (_, graphics) in byPosition {
+                guard let first = graphics.first,
+                      let staff = page.staff(at: Point(first.bounds.midX, first.bounds.midY), among: v.staves),
+                      let head = EngravedPage.notehead(among: graphics, space: staff.space) else { continue }
+                // Accumulate: two quick ↑ before a recompile move the ghost twice.
+                let base = ghosts.first { abs($0.midX - head.bounds.midX) < staff.space * 0.3 } ?? head.bounds
+                ghosts.removeAll { abs($0.midX - head.bounds.midX) < staff.space * 0.3 }
+                var r = base
+                r.y -= Double(halfSpaces) * staff.space / 2
+                ghosts.append(r)
+            }
+            v.provisional = ghosts
+        }
+    }
+
     /// Drops any mouse entry preview (the armed duration was cleared).
     func clearGhost() {
         pageViews.forEach { $0.ghost = nil }
@@ -235,11 +263,14 @@ private final class PageView: NSView {
         didSet {
             staves = rendered?.page.staves ?? []
             ghost = nil
+            provisional = []
             needsDisplay = true
         }
     }
     private(set) var staves: [Staff] = []
     var ghost: Ghost? { didSet { if ghost != oldValue { needsDisplay = true } } }
+    /// Notehead rectangles of provisional (not yet engraved) positions.
+    var provisional: [Rect] = [] { didSet { if provisional != oldValue { needsDisplay = true } } }
     var highlights: [Rect] = [] { didSet { if highlights != oldValue { needsDisplay = true } } }
     var lightsOut = false { didSet { needsDisplay = true } }
     private var dragStart: NSPoint?
@@ -320,6 +351,10 @@ private final class PageView: NSView {
         }
 
         if let ghost { drawGhost(ghost, in: ctx, color: accent) }
+        for r in provisional {
+            ctx.setFillColor(accent.withAlphaComponent(0.55).cgColor)
+            ctx.fillEllipse(in: viewRect(for: r).insetBy(dx: 0.5, dy: 1))
+        }
 
         if let dragRect {
             ctx.setFillColor(accent.withAlphaComponent(0.08).cgColor)

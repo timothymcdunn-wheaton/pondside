@@ -274,3 +274,36 @@ final class LexiconEngravingTests: XCTestCase {
         XCTAssertEqual(sheet.cues.first?.position.moment, "5/4")
     }
 }
+
+final class ProjectConfigTests: XCTestCase {
+    func testFindsTheNearestConfigAbove() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pondside-proj-\(UUID().uuidString)")
+        let score = root.appendingPathComponent("score")
+        try FileManager.default.createDirectory(at: score, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try """
+        [lilypond]
+        version = "2.26.0"
+        [audio]
+        sample-rate = 44100
+        soundfont = "sounds/piano.sf2"
+        [supercollider]
+        handlers = "patch/cues.scd"
+        """.write(to: root.appendingPathComponent("pondside.toml"), atomically: true, encoding: .utf8)
+        let config = try ProjectConfig.find(from: score.appendingPathComponent("piece.ly"))
+        XCTAssertEqual(config.sampleRate, 44100)
+        XCTAssertEqual(config.lilypondVersion, "2.26.0")
+        XCTAssertEqual(config.handlers?.lastPathComponent, "cues.scd")
+        XCTAssertEqual(config.soundFont?.deletingLastPathComponent().lastPathComponent, "sounds")
+        XCTAssertThrowsError(try ProjectConfig(toml: "[audio]\nsample-rate = 12345", root: root))
+    }
+
+    func testDefaultsWithoutAFile() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("pondside-noproj-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let config = try ProjectConfig.find(from: dir.appendingPathComponent("x.ly"))
+        XCTAssertEqual(config.sampleRate, 48000)
+        XCTAssertNil(config.handlers)
+    }
+}
