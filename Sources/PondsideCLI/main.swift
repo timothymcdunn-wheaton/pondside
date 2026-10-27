@@ -34,6 +34,10 @@ commands:
       tier 1 (entry.toml and README), impl is tier 2 (the implementation).
       check finds \\lexicon uses with unknown entries or bad params; include
       writes the settings file that defines \\lexicon for a score.
+  mockup <file.ly> [--out <file.wav>] [--rate <hz>] [--renderer musescore|fluidsynth] [--soundfont <sf2>]
+      Render the score's MIDI (it needs a \\midi block) to audio for the
+      patch to play cues against: MuseScore 4 first, fluidsynth as the
+      fallback. Silent renders and wrong sample rates are refused.
   completion zsh|bash
       Print a completion script: eval "$(pondside completion zsh)".
   mcp [--project <dir>]
@@ -317,7 +321,33 @@ func lexiconCommand(_ args: Arguments) throws -> Int32 {
     return 0
 }
 
-let completionCommands = ["render", "check", "cues", "timeline", "handlers", "lexicon", "links", "doctor", "watch", "mcp",
+func mockup(_ args: Arguments) async throws -> Int32 {
+    let source = try sourceURL(args)
+    let lily = try await resolveLilyPond(for: source)
+    let rate = Int(args.options["rate"] ?? "48000") ?? 48000
+    let only = try args.options["renderer"].map { r -> MockupRenderer.Renderer in
+        guard let v = MockupRenderer.Renderer(rawValue: r) else { throw CLIError("--renderer is musescore or fluidsynth") }
+        return v
+    }
+    let scratch = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: scratch) }
+    let base = scratch.appendingPathComponent(source.deletingPathExtension().lastPathComponent)
+    let compile = try await ProcessRunner.run(lily.executable, ["-dno-print-pages", "-o", base.path, source.path],
+                                              currentDirectory: source.deletingLastPathComponent().path)
+    let midi = ["midi", "mid"].map { base.appendingPathExtension($0) }.first { FileManager.default.fileExists(atPath: $0.path) }
+    guard let midi else {
+        printErr(compile.stderrString.split(separator: "\n").suffix(5).joined(separator: "\n"))
+        throw CLIError("no MIDI was written: add \\midi { } to the score you want rendered")
+    }
+    let out = URL(fileURLWithPath: args.options["out"]
+        ?? source.deletingPathExtension().appendingPathExtension("wav").path)
+    let renderer = MockupRenderer(sampleRate: rate, soundFont: args.options["soundfont"].map { URL(fileURLWithPath: $0) })
+    let (used, info) = try await renderer.render(midi: midi, to: out, only: only)
+    print("\(out.path): \(String(format: "%.1f", info.seconds)) s at \(info.sampleRate) Hz via \(used.rawValue), peak \(String(format: "%.1f", 20 * log10(info.peak))) dBFS")
+    return 0
+}
+
+let completionCommands = ["render", "check", "cues", "timeline", "handlers", "mockup", "lexicon", "links", "doctor", "watch", "mcp",
                           "completion", "version", "help"]
 
 func completion(_ args: Arguments) throws -> Int32 {
@@ -399,7 +429,7 @@ let command = argv.count > 1 ? argv[1] : "help"
 let rest = argv.dropFirst(2)
 
 do {
-    let args = try Arguments(rest, valued: ["format", "out", "on-change", "rate", "scd", "project"])
+    let args = try Arguments(rest, valued: ["format", "out", "on-change", "rate", "scd", "project", "renderer", "soundfont"])
     let status: Int32
     switch command {
     case "render": status = try await render(args)
@@ -412,6 +442,7 @@ do {
     case "handlers": status = try await handlers(args)
     case "lexicon": status = try lexiconCommand(args)
     case "completion": status = try completion(args)
+    case "mockup": status = try await mockup(args)
     case "mcp":
         let project = URL(fileURLWithPath: args.options["project"] ?? FileManager.default.currentDirectoryPath)
         await MCPServer(project: project).serveStdio()

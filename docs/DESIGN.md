@@ -775,3 +775,23 @@ before LilyPond answers. With a warm compile at a few hundred
 milliseconds on slow hardware, the windowed compile matters less than
 the brief assumed. Provisional rendering is what still separates
 "fast" from "instant".
+
+### M8 (second part): the Cue Inspector and the mockup render
+
+- **Cue Inspector:** a pane (`⌃9`, or `␣ p u`) listing every cue with
+  bar, beat, time and handler. Columns sort; ↩ jumps to the `\ecue`. Cues
+  with no `p.on(\name, …)` in the `.scd` files beside the score are
+  flagged. `␣ g c` is the brief's "go to cue". The data comes free:
+  every canvas compile carries the timing listener.
+- **Mockup, plan change:** LilyPond has no MusicXML export, so the
+  "export MusicXML, then MuseScore" path in the brief doesn't exist
+  without a converter. The composer's working path does exist: render
+  LilyPond's own MIDI with MuseScore 4 (`mscore -o piece.wav
+  piece.midi`). The MIDI is also exactly what the cue times follow.
+  `pondside mockup` compiles the MIDI, tries MuseScore, then fluidsynth
+  with a SoundFont. Every result is measured (`WAVInfo`: rate, length,
+  peak, RMS). A silent file or a wrong sample rate is refused with the
+  reason and the alternatives. Renders are cached by the MIDI's content
+  hash plus renderer and rate.
+- **Not yet:** per-staff stems for muting live parts, padding the render
+  to the `end` mark, and in-app audition (AVAudioEngine).
