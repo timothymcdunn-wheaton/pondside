@@ -40,6 +40,9 @@ commands:
       fallback. Silent renders and wrong sample rates are refused.
   completion zsh|bash
       Print a completion script: eval "$(pondside completion zsh)".
+  rpc <method> [<json params>]
+      Call the running app over its socket, e.g. pondside rpc app.documents,
+      pondside rpc document.select '{"path":"score.ly","line":12,"character":4}'.
   mcp [--project <dir>]
       Serve the Model Context Protocol on stdin/stdout: tools (check, query,
       render, cues, lexicon_check) and the Lexicon tiers as resources.
@@ -347,7 +350,7 @@ func mockup(_ args: Arguments) async throws -> Int32 {
     return 0
 }
 
-let completionCommands = ["render", "check", "cues", "timeline", "handlers", "mockup", "lexicon", "links", "doctor", "watch", "mcp",
+let completionCommands = ["render", "check", "cues", "timeline", "handlers", "mockup", "rpc", "lexicon", "links", "doctor", "watch", "mcp",
                           "completion", "version", "help"]
 
 func completion(_ args: Arguments) throws -> Int32 {
@@ -443,6 +446,11 @@ do {
     case "lexicon": status = try lexiconCommand(args)
     case "completion": status = try completion(args)
     case "mockup": status = try await mockup(args)
+    case "rpc":
+        guard let method = args.positional.first else { throw CLIError("rpc needs a method name") }
+        let params = try args.positional.dropFirst().first.map { try JSONDecoder().decode(JSONValue.self, from: Data($0.utf8)) } ?? [:]
+        print(try RPCClient.call(method, params).jsonString(pretty: true))
+        status = 0
     case "mcp":
         let project = URL(fileURLWithPath: args.options["project"] ?? FileManager.default.currentDirectoryPath)
         await MCPServer(project: project).serveStdio()

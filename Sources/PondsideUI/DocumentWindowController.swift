@@ -3,6 +3,7 @@ import UniformTypeIdentifiers
 import PondsideCore
 import PondsideEngrave
 import PondsideTiming
+import PondsideBridge
 
 /// One window: source and score side by side, a one-line status bar, and
 /// bidirectional point-and-click between them. The score is an editor too:
@@ -142,6 +143,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
         editor.onUserEdit = { [weak self] text in
             guard let self else { return }
             self.score.userEdited(self.activeFile, text: text)
+            AppRPC.shared.publish("score.changed", ["path": .string(self.activeFile.url.path), "by": "app"])
             self.rebuildEngravingMap()
         }
         editor.onSelectionChange = { [weak self] range in
@@ -293,6 +295,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func editorSelectionChanged(_ range: NSRange) {
+        AppRPC.shared.publish("selection.changed", rpcSelection)
         guard !scoreIsDriving else { return }
         refreshHighlight(reveal: true)
     }
@@ -652,6 +655,7 @@ extension DocumentWindowController: ScoreCanvasDelegate {
 extension DocumentWindowController: ScoreDocumentDelegate {
     func document(_ document: ScoreDocument, didReloadFromDisk file: SourceFile) {
         editor.mergeExternal(file.text, into: file.url)
+        AppRPC.shared.publish("score.changed", ["path": .string(file.url.path), "by": "disk"])
         rebuildEngravingMap()
         refreshHighlight(reveal: false)
         statusBar.flash("Reloaded \(file.displayName) — it changed on disk")
@@ -692,6 +696,7 @@ extension DocumentWindowController: ScoreDocumentDelegate {
         canvas.setPages(score.pages)
         if first { canvas.fitWidth() }
         compilerOutput.show(score.lastLog)
+        AppRPC.shared.publish("compile.finished", rpcSummary)
         cueInspector.show(score.cueSheet, scoreFolder: score.url.deletingLastPathComponent())
         rebuildEngravingMap()
         refreshHighlight(reveal: false)
@@ -956,16 +961,37 @@ extension DocumentWindowController: CommandResponder {
             statusBar.flash("cue \(cue.name) is generated (a Lexicon sound), so it has no line of its own")
             return
         }
-        guard let file = score.file(for: origin.file) else {
+        guard revealSource(path: origin.file, line: origin.line, character: origin.character) else {
             statusBar.flash("cue \(cue.name) is in \(origin.file), outside this score's files")
             return
         }
+        statusBar.flash("cue \(cue.name) · bar \(cue.position.measure) · \(CueInspectorView.timecode(cue.seconds))")
+    }
+
+    /// Puts the caret at a source position (point-and-click coordinates),
+    /// switching files if needed; the score highlights what is there.
+    func revealSource(path: String, line: Int, character: Int) -> Bool {
+        guard let file = score.file(for: path) else { return false }
         if file !== activeFile { showFile(file) }
         let text = editor.text
-        guard let i = SourceText(text).index(of: SourcePosition(line: origin.line, character: origin.character)) else { return }
+        guard let i = SourceText(text).index(of: SourcePosition(line: line, character: character)) else { return false }
         let offset = text.utf8.distance(from: text.startIndex, to: i)
         setSelection(utf8: offset..<offset)
-        statusBar.flash("cue \(cue.name) · bar \(cue.position.measure) · \(CueInspectorView.timecode(cue.seconds))")
+        return true
+    }
+
+    /// The selection in point-and-click coordinates, for scripts.
+    var rpcSelection: JSONValue {
+        let text = editor.text
+        let r = selectionUTF8()
+        let source = SourceText(text)
+        func position(_ o: Int) -> JSONValue {
+            let p = source.position(of: text.utf8.index(text.utf8.startIndex, offsetBy: min(o, text.utf8.count)))
+            return ["line": .number(Double(p.line)), "character": .number(Double(p.character))]
+        }
+        let selected = String(decoding: Array(text.utf8)[r], as: UTF8.self)
+        return ["path": .string(activeFile.url.path), "start": position(r.lowerBound), "end": position(r.upperBound),
+                "text": .string(selected), "events": .array(targets().events.map { .string(tree.string(tree.events[$0].range)) })]
     }
 
     private static let dynamics = ["ppp", "pp", "p", "mp", "mf", "f", "ff", "fff", "fp", "sf", "sfz", "rfz"]

@@ -778,7 +778,7 @@ the brief assumed. Provisional rendering is what still separates
 
 ### M8 (second part): the Cue Inspector and the mockup render
 
-- **Cue Inspector:** a pane (`⌃9`, or `␣ p u`) listing every cue with
+- **Cue Inspector:** a pane (`⌃8`, or `␣ p u`) listing every cue with
   bar, beat, time and handler. Columns sort; ↩ jumps to the `\ecue`. Cues
   with no `p.on(\name, …)` in the `.scd` files beside the score are
   flagged. `␣ g c` is the brief's "go to cue". The data comes free:

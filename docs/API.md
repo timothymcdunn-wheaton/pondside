@@ -128,8 +128,33 @@ p.play(from: "42");                          // bar 42, or seconds
 It refuses to play when the server's sample rate differs from the
 mockup's, and prints the line that fixes it.
 
-## Not yet
+## The running app: JSON-RPC over a Unix socket
 
-- The app's JSON-RPC socket (live document state, selection, events such
-  as `score.changed` and `compile.finished`). The MCP tools work on files,
-  so they serve agents today without the app running.
+While Pondside runs, it listens on
+`~/Library/Application Support/Pondside/pondside.sock` (or
+`$PONDSIDE_SOCKET`). Only the user can connect: the socket is mode 0600.
+Messages are JSON-RPC 2.0, one per line. `pondside rpc <method> [params]`
+calls a method from the shell.
+
+| Method | Params | Result |
+|---|---|---|
+| `app.version` | | name, version, socket path |
+| `app.documents` | | each open score: `root`, `files`, `active` file, `status` |
+| `document.text` | `path?` | `{ path, text }`: the app's current text, including unsaved edits |
+| `document.selection` | `path?` | `{ path, start, end, text, events }`, with positions as `{ line, character }` |
+| `document.select` | `path, line, character` | puts the caret there (the score highlights it); returns the selection |
+| `document.engrave` | `path?` | starts a compile; the result arrives as `compile.finished` |
+| `document.cues` | `path?` | the latest cues.json |
+| `document.open` | `path` | opens a score in a window |
+| `subscribe` / `unsubscribe` | `events: [names]` (`"*"` for all) | the current subscriptions |
+
+`path` names any file in an open score's include graph. Without it, the
+frontmost score is used.
+
+Events, sent as notifications to subscribers:
+
+| Event | Params |
+|---|---|
+| `score.changed` | `{ path, by }`, where `by` is `app` (typed in Pondside) or `disk` (another tool wrote the file) |
+| `compile.finished` | the score's summary, as in `app.documents` |
+| `selection.changed` | the selection, as in `document.selection` |

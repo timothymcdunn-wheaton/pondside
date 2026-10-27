@@ -19,6 +19,7 @@ public enum PondsideApplication {
 @MainActor
 final class PondsideAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var controllers: [DocumentWindowController] = []
+    var documentControllers: [DocumentWindowController] { controllers }
     private var openedFromLaunch = false
     private var lightsOut = UserDefaults.standard.bool(forKey: "Pondside.lightsOut")
 
@@ -31,6 +32,9 @@ final class PondsideAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemVali
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Scripts and agents follow the app over a socket (docs/API.md).
+        AppRPC.shared.app = self
+        AppRPC.shared.start()
         // `PondsideApp score.ly` from a terminal or agent.
         let args = CommandLine.arguments.dropFirst().filter { !$0.hasPrefix("-") }
         for path in args { self.open(URL(fileURLWithPath: path)) }
@@ -46,6 +50,7 @@ final class PondsideAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemVali
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationWillTerminate(_ notification: Notification) {
+        AppRPC.shared.stop()
         controllers.forEach { $0.score.flushPendingSaves() }
     }
 
