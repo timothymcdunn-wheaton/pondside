@@ -35,6 +35,25 @@ pondside completion zsh|bash                       eval "$(pondside completion z
   SuperCollider loaders in the lilypond-supercollider workflow already
   read.
 
+## Project settings: `pondside.toml`
+
+Put `pondside.toml` at the project root. The CLI and the app read the
+nearest one at or above the score, and command-line options override it.
+
+```toml
+[lilypond]
+version = "2.26.0"            # compile with this LilyPond; wins over \version
+
+[audio]
+sample-rate = 48000           # cue samples and the mockup; the quark checks it
+renderer = "musescore"        # or "fluidsynth"
+soundfont = "sounds/piano.sf2"
+
+[supercollider]
+handlers = "patch/cues.scd"   # the default for `pondside handlers`
+resources = "patch/resources"
+```
+
 ## MCP
 
 `pondside mcp` speaks the Model Context Protocol on stdin/stdout (JSON-RPC
