@@ -166,6 +166,14 @@ public final class RPCSocketServer: @unchecked Sendable {
         }
     }
 
+    /// Synchronous, so the lock is never held across a suspension.
+    private func updateSubscriptions(_ client: Int32, adding: Bool, _ names: Set<String>) -> Set<String> {
+        lock.lock()
+        defer { lock.unlock() }
+        if adding { clients[client, default: []].formUnion(names) } else { clients[client]?.subtract(names) }
+        return clients[client] ?? []
+    }
+
     func handle(_ line: String, client: Int32) async -> String? {
         guard let message = try? JSONDecoder().decode(JSONValue.self, from: Data(line.utf8)) else {
             return MCPServer.error(id: .null, code: -32700, message: "parse error").jsonString()
@@ -180,11 +188,7 @@ public final class RPCSocketServer: @unchecked Sendable {
             switch method {
             case "subscribe", "unsubscribe":
                 guard case .array(let names)? = params["events"] else { throw MethodError("events: [names]") }
-                let set = Set(names.compactMap(\.string))
-                lock.lock()
-                if method == "subscribe" { clients[client, default: []].formUnion(set) } else { clients[client]?.subtract(set) }
-                let now = clients[client] ?? []
-                lock.unlock()
+                let now = updateSubscriptions(client, adding: method == "subscribe", Set(names.compactMap(\.string)))
                 result = ["subscribed": .array(now.sorted().map { .string($0) })]
             default:
                 result = try await handler(method, params)
@@ -211,7 +215,7 @@ private final class LockedReply: @unchecked Sendable {
 /// A minimal client, for the CLI and tests.
 public enum RPCClient {
     /// Opens a connection to the app's socket.
-    public static func connect(path: String = RPCSocketServer.defaultPath) throws -> Int32 {
+    public static func connection(path: String = RPCSocketServer.defaultPath) throws -> Int32 {
         #if os(Linux)
         let fd = socket(AF_UNIX, Int32(SOCK_STREAM.rawValue), 0)
         #else
@@ -260,7 +264,7 @@ public enum RPCClient {
 
     /// Sends one request and returns its result (or throws its error).
     public static func call(_ method: String, _ params: JSONValue = [:], path: String = RPCSocketServer.defaultPath) throws -> JSONValue {
-        let fd = try connect(path: path)
+        let fd = try connection(path: path)
         defer { close(fd) }
         send(fd, method, params)
         let reply = try readMessage(fd)

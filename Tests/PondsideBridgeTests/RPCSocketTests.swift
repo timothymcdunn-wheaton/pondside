@@ -20,7 +20,7 @@ final class RPCSocketTests: XCTestCase {
         XCTAssertThrowsError(try RPCClient.call("fail", path: path)) { XCTAssertTrue("\($0)".contains("bad params")) }
         XCTAssertThrowsError(try RPCClient.call("nope", path: path))
 
-        let fd = try RPCClient.connect(path: path)
+        let fd = try RPCClient.connection(path: path)
         defer { close(fd) }
         RPCClient.send(fd, "subscribe", ["events": ["compile.finished"]])
         XCTAssertEqual(try RPCClient.readMessage(fd)["result"]?["subscribed"], ["compile.finished"])
