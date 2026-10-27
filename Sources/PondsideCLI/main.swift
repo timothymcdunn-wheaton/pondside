@@ -23,6 +23,10 @@ commands:
       Every \\ecue with its moment, bar, beat, seconds and samples, timed
       exactly as LilyPond's MIDI plays (hidden \\playTempo included).
       --format cues writes the piece.cues lines SuperCollider loaders read.
+  handlers <file.ly> --scd <cues.scd> [--project <dir>] [--rate <hz>]
+      Create or update a SuperCollider file with one handler per cue. New
+      cues get stubs; cues that left the score are commented out; code
+      inside a handler is never changed.
   timeline <file.ly> [--json]
       The tempo map: each tempo step's moment, seconds and quarter notes per minute.
   watch <file> --on-change <command>
@@ -244,6 +248,27 @@ func cues(_ args: Arguments) async throws -> Int32 {
     return 0
 }
 
+func handlers(_ args: Arguments) async throws -> Int32 {
+    guard let scd = args.options["scd"] else { throw CLIError("--scd <file> is required") }
+    let sheet = try await cueSheet(args)
+    for w in sheet.warnings { printErr("warning: \(w)") }
+    let url = URL(fileURLWithPath: scd)
+    if let existing = try? String(contentsOf: url, encoding: .utf8) {
+        let (text, report) = HandlerSync.sync(existing, with: sheet)
+        if text != existing { try Data(text.utf8).write(to: url, options: .atomic) }
+        for (what, ids) in [("added", report.added), ("moved", report.moved), ("restored", report.restored),
+                            ("commented out", report.orphaned)] where !ids.isEmpty {
+            print("\(what): \(ids.joined(separator: ", "))")
+        }
+        if text == existing { print("\(url.lastPathComponent) is up to date") }
+    } else {
+        let project = args.options["project"] ?? url.deletingLastPathComponent().path
+        try Data(HandlerSync.starter(sheet, projectPath: project).utf8).write(to: url, options: .atomic)
+        print("wrote \(url.lastPathComponent) with \(sheet.cues.count) handler stubs")
+    }
+    return 0
+}
+
 func timeline(_ args: Arguments) async throws -> Int32 {
     let sheet = try await cueSheet(args)
     if args.flags.contains("json") {
@@ -272,7 +297,7 @@ let command = argv.count > 1 ? argv[1] : "help"
 let rest = argv.dropFirst(2)
 
 do {
-    let args = try Arguments(rest, valued: ["format", "out", "on-change", "rate"])
+    let args = try Arguments(rest, valued: ["format", "out", "on-change", "rate", "scd", "project"])
     let status: Int32
     switch command {
     case "render": status = try await render(args)
@@ -282,6 +307,7 @@ do {
     case "watch": status = try await watch(args)
     case "cues": status = try await cues(args)
     case "timeline": status = try await timeline(args)
+    case "handlers": status = try await handlers(args)
     case "version", "--version": print("pondside 0.1.0 (M1)"); status = 0
     case "help", "--help", "-h": print(usage); status = 0
     default:

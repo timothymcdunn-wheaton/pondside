@@ -1,0 +1,9 @@
+(
+	name: "Pondside",
+	summary: "Play a LilyPond score's mockup and fire its electronics cues on SuperCollider's own clock",
+	version: "0.1.0",
+	schelp: "Pondside",
+	dependencies: [],
+	license: "GPL-3.0-or-later",
+	url: "https://github.com/timothymcdunn-wheaton/pondside"
+)
