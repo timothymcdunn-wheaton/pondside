@@ -766,7 +766,9 @@ the `(lily)` module's own procedures.
   compile and every 150 jobs. Export never uses the daemon.
 - **Results:** warm compiles of the test scores take 0.17–0.38 s here,
   against 3.3–3.5 s cold, a 10–20× speed-up. CI prints
-  `Pondside benchmark:` for the multi-file fixture on every run.
+  `Pondside benchmark:` for the multi-file fixture on every run. The
+  first CI run gave 1502 ms cold and a median of 166 ms warm, 9× (GitHub
+  Linux runner, LilyPond 2.24.3).
 
 **Still to do in M4:** the windowed preview compile of the edited
 `\score` (only where a file has several), content-addressed caching of
