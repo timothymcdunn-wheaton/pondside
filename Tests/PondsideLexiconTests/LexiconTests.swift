@@ -183,12 +183,12 @@ final class LibraryTests: XCTestCase {
     func testCoreEntriesAreValid() {
         let lex = Lexicon.load(Lexicon.standardScopes(project: nil).filter { $0.0 == .core })
         XCTAssertTrue(lex.problems.isEmpty, lex.problems.map(\.description).joined(separator: "\n"))
-        XCTAssertEqual(lex.ids, ["air-tone", "feathered-beam", "niente-hairpin", "timed-fermata"])
+        XCTAssertEqual(lex.ids, ["air-tone", "feathered-beam", "niente-hairpin", "proportional", "senza-misura", "timed-fermata"])
         let index = lex.indexJSON()
-        XCTAssertEqual(index.split(separator: "\n").count, 6, "one line per entry between [ and ]")
+        XCTAssertEqual(index.split(separator: "\n").count, lex.ids.count + 2, "one line per entry between [ and ]")
         XCTAssertTrue(index.contains("{\"gloss\":\"Air sound"))
         // Tier 0 stays cheap: well under 100 tokens (~400 characters) an entry.
-        XCTAssertLessThan(index.count / 4, 400)
+        XCTAssertLessThan(index.count / 4 / lex.ids.count, 60)
         XCTAssertTrue(lex.tier1("air-tone")?.contains("[sound]") ?? false)
         XCTAssertTrue(lex.tier2("air-tone")?.contains("pondside-lexicon-register!") ?? false)
     }
@@ -251,6 +251,8 @@ final class LexiconEngravingTests: XCTestCase {
           \\lexicon "timed-fermata" #'((seconds . 6)) { g1 }
           \\lexicon "air-tone" #'((amount . 0.8) (label . "air")) { d2 e }
           \\lexicon "feathered-beam" #'((direction . "rit")) { c16[ d e f g a b c] }
+          \\lexicon "senza-misura" #'((seconds . 20) (label . "senza misura")) { c8 d e f g4 a8 b c2 }
+          \\lexicon "proportional" #'((unit . 16)) { c8 c16 c c4 c8. c16 c4 }
         }
         """)
         XCTAssertTrue(result.succeeded, result.log)
@@ -272,6 +274,22 @@ final class LexiconEngravingTests: XCTestCase {
         XCTAssertEqual(sheet.cues.map(\.name), ["airTone"])
         XCTAssertEqual(sheet.cues.first?.seconds ?? 0, 7, accuracy: 1e-6)
         XCTAssertEqual(sheet.cues.first?.position.moment, "5/4")
+    }
+
+    func testSenzaMisuraLastsWhatItSays() async throws {
+        let (result, file, lily) = try await compile("""
+        timingMark = #(define-event-function (text) (string?)
+          (let ((ev #{ -\\tweak stencil ##f ^\\markup #text #})) (ly:music-set-property! ev 'timing-label text) ev))
+        \\score { \\relative c'' {
+          \\tempo 4 = 60
+          c4 \\lexicon "senza-misura" #'((seconds . 20)) { c8 d e f g4 a8 b c2 }
+          <>\\timingMark "after" c4 } \\layout { } }
+        """)
+        XCTAssertTrue(result.succeeded, result.log)
+        let log = try await TimingDump.run(lily, source: file)
+        let sheet = CueSheet(log: log, score: "score.ly")
+        let after = try XCTUnwrap(sheet.marks.first { $0.text == "after" })
+        XCTAssertEqual(after.seconds, 21, accuracy: 1e-6, "1 s of c4, then the 20 s passage")
     }
 }
 

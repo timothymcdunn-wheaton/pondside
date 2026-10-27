@@ -1,0 +1,24 @@
+schema   = 1
+id       = "proportional"
+version  = "1.0.0"
+gloss    = "Proportional spacing for the passage: horizontal space follows time"
+tags     = ["spacing", "proportional", "layout", "contemporary"]
+kind     = "layout"
+lilypond = ">=2.24"
+license  = "CC0-1.0"
+
+[entry]
+command   = "\\lexicon \"proportional\" #'((unit . 16)) { c''8 c''16 c'' c''4 }"
+attaches  = "span"
+music-arg = true
+
+[params.unit]
+type    = "int"
+default = 16
+min     = 1
+max     = 128
+doc     = "The note value given one unit of space: 16 spaces sixteenths evenly"
+
+[files]
+impl   = "impl.ily"
+readme = "README.md"

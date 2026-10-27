@@ -1,0 +1,38 @@
+schema   = 1
+id       = "senza-misura"
+version  = "1.0.0"
+gloss    = "Unmetered passage: no barlines or meter, lasting N seconds in playback"
+tags     = ["unmetered", "timing", "cadenza", "contemporary"]
+kind     = "gesture"
+lilypond = ">=2.24"
+license  = "CC0-1.0"
+
+[entry]
+command   = "\\lexicon \"senza-misura\" #'((seconds . 20)) { c''8 d'' e'' f'' g''4 }"
+attaches  = "span"
+music-arg = true
+
+[params.seconds]
+type    = "float"
+default = 10.0
+min     = 0.5
+max     = 600.0
+unit    = "seconds"
+doc     = "How long the passage lasts in the MIDI and in cue times"
+
+[params.resume]
+type    = "float"
+default = 60.0
+min     = 10.0
+max     = 400.0
+unit    = "quarter notes per minute"
+doc     = "The tempo after the passage"
+
+[params.label]
+type    = "markup"
+default = ""
+doc     = "Text at the start, e.g. senza misura, ca. 20″"
+
+[files]
+impl   = "impl.ily"
+readme = "README.md"
