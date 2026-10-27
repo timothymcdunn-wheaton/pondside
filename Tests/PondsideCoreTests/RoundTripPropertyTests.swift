@@ -227,13 +227,13 @@ struct EditFuzzer {
         let oldPitches = oldEventNotes.filter { !skipOldNotes.contains($0) }.map { old.notes[$0].absolute }
         let newPitches = newEventNotes.filter { !skipNewNotes.contains($0) }.map { new.notes[$0].absolute }
         if oldPitches != newPitches {
-            let i = zip(oldPitches, newPitches).firstIndex { $0 != $1 } ?? min(oldPitches.count, newPitches.count)
+            let i = zip(oldPitches, newPitches).enumerated().first { $0.element.0 != $0.element.1 }?.offset ?? min(oldPitches.count, newPitches.count)
             return "pitches changed for \(check) at note #\(i): \(oldPitches[safe: i].map(\.description) ?? "-") → \(newPitches[safe: i].map(\.description) ?? "-"); edits \(edits)"
         }
         let oldDurations = old.events.indices.filter { !skipOldEvents.contains($0) }.map { old.events[$0].effectiveDuration }
         let newDurations = new.events.indices.filter { !skipNewEvents.contains($0) }.map { new.events[$0].effectiveDuration }
         if oldDurations != newDurations {
-            let i = zip(oldDurations, newDurations).firstIndex { $0 != $1 } ?? min(oldDurations.count, newDurations.count)
+            let i = zip(oldDurations, newDurations).enumerated().first { $0.element.0 != $0.element.1 }?.offset ?? min(oldDurations.count, newDurations.count)
             return "durations changed for \(check) at event #\(i); edits \(edits)"
         }
         return nil
