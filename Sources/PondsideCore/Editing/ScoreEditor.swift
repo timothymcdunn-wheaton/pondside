@@ -293,6 +293,15 @@ public struct ScoreEditor: Sendable {
         if targets.contains(where: { events[$0].isScopeOperand }) { return nil }
         var edits: [TextEdit] = []
         var materialized = false
+        for e in targets.sorted() where events[e].kind == .chord {
+            // A later `q` repeating this chord must keep sounding it.
+            guard let q = events.indices.first(where: { $0 > e && (events[$0].kind == .chord || events[$0].kind == .chordRepeat) }),
+                  events[q].kind == .chordRepeat, !targets.contains(q) else { continue }
+            // In \relative a written-out chord would join the octave chain.
+            if case .relative = events[e].octaveMode { return nil }
+            let head = tree.string(events[e].range.lowerBound..<events[e].durationInsertion)
+            edits.append(TextEdit(events[q].range.lowerBound..<events[q].durationInsertion, head))
+        }
         for e in targets.sorted() {
             edits.append(TextEdit(deletionRange(events[e].range), ""))
             // A bare duration repeating this event keeps sounding it: copy the

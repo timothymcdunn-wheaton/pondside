@@ -72,6 +72,7 @@ struct Parser {
     }
     private var st = State()
     private var lastSignificant: SyntaxKind?
+    private var lastSignificantStart = 0
     /// End of the most recent event, to recognise bare durations after it.
     private var lastEventEnd = -1
 
@@ -139,6 +140,22 @@ struct Parser {
         return s
     }
 
+    private func isMusicMode(_ mode: LexMode) -> Bool {
+        mode == .notes || mode == .chords || mode == .drums
+    }
+
+    /// A duration in music position — right after an event or bar check, or
+    /// at the start of a music block — is a note of its own. Anywhere else
+    /// (after a command, `=`, a string, another number) it is an argument.
+    private func startsBareDuration(_ t: Token) -> Bool {
+        if followsEvent(t) { return true }
+        switch lastSignificant {
+        case .openBrace?, .openSimultaneous?, .barCheck?: return true
+        case .escapedPunct?: return text(lastSignificantStart, min(b.count, lastSignificantStart + 2)) == "\\\\"
+        default: return false
+        }
+    }
+
     /// Whether `t` comes right after an event, with only trivia and bar
     /// checks between: there a bare number is a duration-only note.
     private func followsEvent(_ t: Token) -> Bool {
@@ -176,7 +193,10 @@ struct Parser {
             let before = pos
             out += parseItem(t, mode: mode, context: context)
             if pos == before { out.append(consume(t, as: .unknown)) }
-            if !t.kind.isTrivia { lastSignificant = t.kind }
+            if !t.kind.isTrivia {
+                lastSignificant = t.kind
+                lastSignificantStart = t.start
+            }
         }
         return out
     }
@@ -197,6 +217,14 @@ struct Parser {
             return [parseScheme()]
         case .string:
             return [parseString(t, mode: mode)]
+        case .command where isMusicMode(mode) && !st.inlineMarkup && st.pitchArgs == 0
+                            && KnownCommands.durationNames.contains(text(t.start + 1, t.end)) && startsBareDuration(t):
+            // `<a' a>\longa \breve` — a duration command can be a bare duration too.
+            if let d = parseDuration(t) {
+                return [finishEvent(kind: .repeatedPitch, nodeKind: .event, start: t.start, children: [d],
+                                    notes: [], mode: mode, presetDuration: d.range)]
+            }
+            return [parseCommand(t, mode: mode)]
         case .command:
             return [parseCommand(t, mode: mode)]
         case .word:
@@ -211,8 +239,7 @@ struct Parser {
         case .markupWord:
             st.inlineMarkup = false
             return [consume(t, as: .markupWord)]
-        case .number where (mode == .notes || mode == .chords || mode == .drums) && !st.inlineMarkup
-                            && st.pitchArgs == 0 && followsEvent(t):
+        case .number where isMusicMode(mode) && !st.inlineMarkup && st.pitchArgs == 0 && startsBareDuration(t):
             if let d = parseDuration(t) {
                 return [finishEvent(kind: .repeatedPitch, nodeKind: .event, start: t.start, children: [d],
                                     notes: [], mode: mode, presetDuration: d.range)]
@@ -245,7 +272,10 @@ struct Parser {
         if let scope { frames.append(scope) }
         closers.append(closer)
         var children = [consume(open, as: open.kind)]
+        let outerSignificant = lastSignificant
+        lastSignificant = open.kind
         children += parseSequence(mode: mode, closer: closer, context: context)
+        lastSignificant = outerSignificant
         closers.removeLast()
         // A `\relative c'` left dangling at the end of a block scopes nothing.
         pendingScope = nil

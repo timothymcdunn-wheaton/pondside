@@ -239,7 +239,10 @@ struct EditFuzzer {
         }
         if oldAligned != newSounding {
             let i = zip(oldAligned, newSounding).enumerated().first { $0.element.0 != $0.element.1 }?.offset ?? min(oldAligned.count, newSounding.count)
-            return "pitches changed for \(check) at event #\(i): \(oldAligned[safe: i]?.description ?? "-") → \(newSounding[safe: i]?.description ?? "-"); edits \(edits)"
+            let near = edits.first.map { e in
+                old.string(max(0, e.range.lowerBound - 40)..<min(old.bytes.count, e.range.upperBound + 40))
+            } ?? ""
+            return "pitches changed for \(check) at event #\(i): \(oldAligned[safe: i]?.description ?? "-") → \(newSounding[safe: i]?.description ?? "-"); edits \(edits) near \(near.debugDescription)"
         }
         let oldDurations = old.events.indices.filter { !skipOldEvents.contains($0) }.map { old.events[$0].effectiveDuration }
         let newDurations = new.events.indices.filter { !skipNewEvents.contains($0) }.map { new.events[$0].effectiveDuration }
