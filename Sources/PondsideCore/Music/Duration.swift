@@ -89,8 +89,9 @@ public struct DurationValue: Hashable, Sendable, CustomStringConvertible {
                 b = rest.prefix { $0.isASCII && $0.isNumber }
                 rest = rest.dropFirst(b.count)
             }
-            num *= Int(a) ?? 1
-            den *= Int(b) ?? 1
+            // Bounded so absurd multipliers can't overflow.
+            num = min(num * min(Int(a.prefix(6)) ?? 1, 1_000_000), 1_000_000_000)
+            den = min(den * min(Int(b.prefix(6)) ?? 1, 1_000_000), 1_000_000_000)
         }
         self.init(log: log, dots: dots, factorNumerator: num, factorDenominator: den)
     }
