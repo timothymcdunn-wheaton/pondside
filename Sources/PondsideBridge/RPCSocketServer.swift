@@ -157,10 +157,11 @@ public final class RPCSocketServer: @unchecked Sendable {
     }
 
     private func send(_ text: String, to fd: Int32) {
-        var bytes = Array(text.utf8)
+        let bytes = Array(text.utf8)
+        let count = bytes.count
         var offset = 0
-        while offset < bytes.count {
-            let n = bytes.withUnsafeMutableBytes { write(fd, $0.baseAddress! + offset, bytes.count - offset) }
+        while offset < count {
+            let n = bytes.withUnsafeBytes { write(fd, $0.baseAddress! + offset, count - offset) }
             if n <= 0 { return }
             offset += n
         }
