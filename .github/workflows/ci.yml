@@ -30,7 +30,15 @@ jobs:
       - name: Test
         env:
           PONDSIDE_CORPUS: /tmp/corpus
-        run: swift test --skip-build
+        shell: bash
+        run: |
+          set -o pipefail
+          status=0
+          swift test --skip-build 2>&1 | tee test.log > /dev/null || status=$?
+          echo "──────── summary ────────"
+          grep -E "error:|Fatal error|fatal error|Crash|crashed|corpus:|recovered:|Executed .* tests" test.log | head -150 || true
+          echo "last test started:"; grep -E "Test Case .* started" test.log | tail -1 || true
+          exit $status
 
   macos:
     runs-on: macos-15
