@@ -193,7 +193,9 @@ struct EditFuzzer {
             }
             let isMarks = spelled.contains(e.range)
             let isSlot = e.range.isEmpty && durationSlots.contains(e.range.lowerBound)
-            if !(inTarget || isMarks || isSlot) {
+            // Writing out a `q` whose chord is being deleted.
+            let isRepeat = old.events.contains { $0.kind == .chordRepeat && $0.range.lowerBound == e.range.lowerBound }
+            if !(inTarget || isMarks || isSlot || isRepeat) {
                 return "non-local edit \(e) for \(check) near \"\(old.string(max(0, e.range.lowerBound - 10)..<min(old.bytes.count, e.range.upperBound + 10)))\""
             }
         }
