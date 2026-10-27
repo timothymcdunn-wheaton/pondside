@@ -164,7 +164,8 @@ struct EditFuzzer {
             let isRest = rng.next() % 5 == 0
             let step: Int? = isRest ? nil : Int(rng.next() % 7)
             let duration: DurationValue? = rng.next() % 2 == 0 ? nil : DurationValue(log: Int(rng.next() % 5))
-            return (editor.insert(step: step, after: e, duration: duration), .insert(after: e, isRest: isRest))
+            guard let edit = editor.insert(step: step, after: e, duration: duration) else { return nil }
+            return (edit, .insert(after: e, isRest: isRest))
         default:
             guard let e = pick(entry), let edit = editor.delete(events: [e]) else { return nil }
             return (edit, .delete(events: [e]))
@@ -262,7 +263,10 @@ struct EditFuzzer {
         return tree.events.enumerated().map { i, ev in
             switch ev.kind {
             case .repeatedPitch: return lastPitched
-            case .chordRepeat: return lastChord
+            case .chordRepeat:
+                // A bare duration after `q` repeats q's chord.
+                lastPitched = lastChord
+                return lastChord
             default:
                 if ev.isPitched { lastPitched = i }
                 if ev.kind == .chord { lastChord = i }

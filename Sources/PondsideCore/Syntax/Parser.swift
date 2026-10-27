@@ -75,6 +75,8 @@ struct Parser {
     private var lastSignificantStart = 0
     /// End of the most recent event, to recognise bare durations after it.
     private var lastEventEnd = -1
+    /// Inside `< >` a number is never a bare duration.
+    private var chordDepth = 0
 
     enum Closer { case brace, simultaneous, chord, embedded }
     enum Context { case document, music, initial, markup }
@@ -148,6 +150,7 @@ struct Parser {
     /// at the start of a music block — is a note of its own. Anywhere else
     /// (after a command, `=`, a string, another number) it is an argument.
     private func startsBareDuration(_ t: Token) -> Bool {
+        if chordDepth > 0 { return false }
         if followsEvent(t) { return true }
         switch lastSignificant {
         case .openBrace?, .openSimultaneous?, .barCheck?: return true
@@ -359,7 +362,11 @@ struct Parser {
         let word = text(t.start, t.end)
         if st.inlineMarkup {
             st.inlineMarkup = false
-            return consume(t, as: .markupWord)
+            // `\markup \filled-box #… #0 r8.`: a note or rest glued to a
+            // duration is music, not the markup's text.
+            let isMusic = mode == .notes && Lexer.isDigit(at(t.end))
+                && (word == "r" || word == "R" || word == "s" || language.parse(word) != nil)
+            if !isMusic { return consume(t, as: .markupWord) }
         }
         if st.expectPath {
             st.expectPath = false
@@ -570,6 +577,7 @@ struct Parser {
         var chordChildren = [consume(open, as: .openChord)]
         var members: [Int] = []
         closers.append(.chord)
+        chordDepth += 1
         while let t = lex(mode) {
             if t.kind == .closeChord {
                 chordChildren.append(consume(t, as: .closeChord))
@@ -601,6 +609,7 @@ struct Parser {
             if pos == before { chordChildren.append(consume(t, as: .unknown)) }
         }
         closers.removeLast()
+        chordDepth -= 1
         if let first = members.first, case .relative = frames[frames.count - 1].mode, mode != .chords {
             frames[frames.count - 1].chainRef = first
         }
@@ -661,6 +670,8 @@ struct Parser {
             explicitDuration: explicit, effectiveDuration: defaultDuration, durationInsertion: insertion,
             postEvents: postEvents, octaveMode: frame.mode, chainRefAfter: frame.chainRef,
             key: key, language: language, lexMode: mode))
+        // Indices are final only now (nested items may have added events).
+        for i in noteIndices { notes[i].event = events.count - 1 }
         lastEventEnd = pos
         return SyntaxNode(nodeKind, start..<pos, children)
     }

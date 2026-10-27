@@ -209,7 +209,7 @@ public struct ScoreEditor: Sendable {
     /// Inserts a note (step 0…6, or nil for a rest) after `event`, choosing
     /// the octave nearest the previous pitch and the key's accidental.
     /// `duration` is the armed duration; nil means "inherit".
-    public func insert(step: Int?, after eventIndex: Int, duration: DurationValue?) -> ScoreEdit {
+    public func insert(step: Int?, after eventIndex: Int, duration: DurationValue?) -> ScoreEdit? {
         let ev = events[eventIndex]
         var edits: [TextEdit] = []
         let inheritedHere = ev.effectiveDuration
@@ -242,28 +242,31 @@ public struct ScoreEditor: Sendable {
         let trailing = isWordByte(at: at) || tree.bytes[safe: at] == UInt8(ascii: "<") ? " " : ""
         edits.append(.insert(" " + noteText + trailing, at: at))
 
-        // A bare duration right after would now repeat (or absorb) the
-        // inserted note: write out what it actually sounds.
-        let next = eventIndex + 1 < events.count ? eventIndex + 1 : nil
-        if let next, events[next].kind == .repeatedPitch, let slot = events[next].duration?.lowerBound {
-            if let source = events[..<next].last(where: { $0.isPitched }), source.kind == .chord {
+        // A bare duration downstream (no pitched event between) would now
+        // repeat — or absorb — the inserted note: write out what it sounds.
+        var keepsReference = false
+        if let bare = events.indices.first(where: { $0 > eventIndex && (events[$0].kind == .repeatedPitch || events[$0].isPitched || events[$0].kind == .chordRepeat) }),
+           events[bare].kind == .repeatedPitch, let slot = events[bare].duration?.lowerBound {
+            guard let source = events[...eventIndex].last(where: { $0.isPitched || $0.kind == .chordRepeat }) else {
+                // Pitchless rhythm (RhythmicStaff): a pitch can't be undone in writing.
+                return nil
+            }
+            if source.kind == .chord || source.kind == .chordRepeat {
                 edits.append(.insert("q", at: slot))
-            } else if let source = events[..<next].last(where: { $0.isPitched }), let n = source.notes.first {
+            } else if let n = source.notes.first {
                 let p = notes[n].absolute
                 let reference = inserted ?? ev.chainRefAfter.map { notes[$0].absolute }
-                let marks = OctaveRules.marks(for: p, mode: events[next].octaveMode, reference: reference)
+                let marks = OctaveRules.marks(for: p, mode: events[bare].octaveMode, reference: reference)
                 edits.append(.insert(notes[n].language.spell(step: p.step, alteration: p.alteration, longForm: notes[n].longForm)
                                      + OctaveRules.markText(marks), at: slot))
+                // The written-out note carries the old reference pitch, so
+                // nothing after it needs compensating.
+                keepsReference = true
             }
-            // The written-out note keeps the old reference pitch, so nothing
-            // after it needs compensating.
-            let anchor = at + 1
-            return ScoreEdit(name: step == nil ? "Insert Rest" : "Insert Note", edits: edits,
-                             selectionAnchors: [mapped(anchor, through: edits, insertionAt: at)])
         }
 
         // The next note in the chain is now relative to the inserted note.
-        if let inserted, case .relative = ev.octaveMode {
+        if let inserted, case .relative = ev.octaveMode, !keepsReference {
             let ref = ev.chainRefAfter
             var followers = notes.indices.filter {
                 notes[$0].referent == ref && notes[$0].mode == .relative && notes[$0].name.lowerBound >= at
@@ -306,9 +309,9 @@ public struct ScoreEditor: Sendable {
             edits.append(TextEdit(deletionRange(events[e].range), ""))
             // A bare duration repeating this event keeps sounding it: copy the
             // head verbatim (its marks were relative to the same reference).
-            let next = e + 1
-            if next < events.count, !targets.contains(next), events[next].kind == .repeatedPitch,
-               events[e].isPitched, let slot = events[next].duration?.lowerBound {
+            if events[e].isPitched,
+               let next = events.indices.first(where: { $0 > e && (events[$0].kind == .repeatedPitch || events[$0].isPitched || events[$0].kind == .chordRepeat) }),
+               !targets.contains(next), events[next].kind == .repeatedPitch, let slot = events[next].duration?.lowerBound {
                 edits.append(.insert(tree.string(events[e].range.lowerBound..<events[e].durationInsertion), at: slot))
                 materialized = true
             }
