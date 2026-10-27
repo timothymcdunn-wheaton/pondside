@@ -1,0 +1,152 @@
+import Foundation
+
+/// What LilyPond reported while engraving: every tempo, cue, mark, note
+/// and group at its exact moment. The interpreter is the source of truth
+/// (DESIGN.md §5.7): nothing here is guessed from the source text.
+///
+/// Two line formats are read, both tab-separated:
+///
+///     <moment> <bar> <kind> <values…>                      timing.ily (.timing files)
+///     <moment> <bar> @<measure position> <kind> <values…>  Pondside's dump, adding where
+///                                                          in the bar each row is
+///
+/// Kinds: `tempo <quarters per minute>`, `text <label>` (cues are
+/// `text cue N`), `note <staff> <midi>`, `group <staff> start|stop`,
+/// `meter <n>/<d>`.
+public struct TimingLog: Sendable, Hashable {
+    public struct Row: Sendable, Hashable {
+        public enum Kind: Sendable, Hashable {
+            case tempo(quartersPerMinute: Double)
+            case text(String)
+            case note(staff: String, midi: Int)
+            case group(staff: String, start: Bool)
+            case meter(numerator: Int, denominator: Int)
+        }
+
+        public var moment: Rational
+        public var bar: Int
+        /// Position within the bar, in whole notes, when the dump knows it.
+        public var measurePosition: Rational?
+        public var kind: Kind
+
+        public init(moment: Rational, bar: Int, measurePosition: Rational? = nil, kind: Kind) {
+            self.moment = moment
+            self.bar = bar
+            self.measurePosition = measurePosition
+            self.kind = kind
+        }
+    }
+
+    public var rows: [Row]
+
+    public init(rows: [Row]) { self.rows = rows }
+
+    /// Parses a log; lines it can't read are skipped (LilyPond's own
+    /// output can share the stream). `prefix` selects tagged lines.
+    public init(parsing text: String, prefix: String? = nil) {
+        var rows: [Row] = []
+        for raw in text.split(separator: "\n") {
+            var line = Substring(raw)
+            if let prefix {
+                guard let r = line.range(of: prefix) else { continue }
+                line = line[r.upperBound...]
+            }
+            var f = line.split(separator: "\t", omittingEmptySubsequences: false).map { String($0) }
+            if f.last == "" { f.removeLast() }
+            guard f.count >= 3, let moment = Rational(parsing: f[0]), let bar = Int(f[1]) else { continue }
+            var i = 2
+            var position: Rational?
+            if f[i].hasPrefix("@") {
+                position = Rational(parsing: f[i].dropFirst())
+                i += 1
+            }
+            guard f.count > i else { continue }
+            let values = Array(f[(i + 1)...])
+            let kind: Row.Kind
+            switch f[i] {
+            case "tempo":
+                guard let v = values.first.flatMap(Double.init) else { continue }
+                kind = .tempo(quartersPerMinute: v)
+            case "text":
+                guard let v = values.first else { continue }
+                kind = .text(v)
+            case "note":
+                guard values.count >= 2, let midi = Int(values[1]) else { continue }
+                kind = .note(staff: values[0], midi: midi)
+            case "group":
+                guard values.count >= 2 else { continue }
+                kind = .group(staff: values[0], start: values[1] == "start")
+            case "meter":
+                // Not a Rational: 6/8 must stay 6/8.
+                let p = values.first?.split(separator: "/") ?? []
+                guard p.count == 2, let n = Int(p[0]), let d = Int(p[1]), d > 0 else { continue }
+                kind = .meter(numerator: n, denominator: d)
+            default:
+                continue
+            }
+            rows.append(Row(moment: moment, bar: bar, measurePosition: position, kind: kind))
+        }
+        self.rows = rows
+    }
+
+    /// Text rows starting with `prefix`, once per moment and text (every
+    /// voice's engraver hears the same event), in score order.
+    public func texts(startingWith prefix: String) -> [(moment: Rational, bar: Int, measurePosition: Rational?, text: String)] {
+        var seen = Set<String>()
+        var out: [(moment: Rational, bar: Int, measurePosition: Rational?, text: String)] = []
+        for r in rows {
+            guard case .text(let t) = r.kind, t.hasPrefix(prefix) else { continue }
+            let key = "\(r.moment) \(t)"
+            if seen.insert(key).inserted { out.append((r.moment, r.bar, r.measurePosition, t)) }
+        }
+        return out.sorted { $0.moment < $1.moment }
+    }
+
+    /// The piece's end: the `end` mark, else the last row.
+    public var end: Rational? {
+        let ends = rows.compactMap { r -> Rational? in
+            if case .text("end") = r.kind { return r.moment }
+            return nil
+        }
+        return ends.max() ?? rows.map(\.moment).max()
+    }
+
+    /// The meter in force at `moment`, if the dump recorded meters.
+    public func meter(at moment: Rational) -> (numerator: Int, denominator: Int)? {
+        var best: (Rational, Int, Int)?
+        for r in rows {
+            guard case .meter(let n, let d) = r.kind, r.moment <= moment else { continue }
+            if best == nil || r.moment >= best!.0 { best = (r.moment, n, d) }
+        }
+        return best.map { ($0.1, $0.2) }
+    }
+
+    /// Notes between each group start and stop on `staff` (e.g. the
+    /// electronics' `\collection`s), in score order.
+    public func collections(staff: String) -> [(moment: Rational, bar: Int, midi: [Int])] {
+        var byMoment: [Rational: [Row]] = [:]
+        for r in rows {
+            switch r.kind {
+            case .note(let s, _) where s == staff: byMoment[r.moment, default: []].append(r)
+            case .group(let s, _) where s == staff: byMoment[r.moment, default: []].append(r)
+            default: break
+            }
+        }
+        var out: [(moment: Rational, bar: Int, midi: [Int])] = []
+        var current: (moment: Rational, bar: Int, midi: [Int])?
+        for m in byMoment.keys.sorted() {
+            let rs = byMoment[m]!
+            if rs.contains(where: { if case .group(_, true) = $0.kind { return true }; return false }) {
+                current = (m, rs[0].bar, [])
+            }
+            if current != nil {
+                for r in rs { if case .note(_, let midi) = r.kind { current!.midi.append(midi) } }
+            }
+            if current != nil, rs.contains(where: { if case .group(_, false) = $0.kind { return true }; return false }) {
+                out.append(current!)
+                current = nil
+            }
+        }
+        return out
+    }
+}

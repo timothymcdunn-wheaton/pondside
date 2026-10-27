@@ -130,7 +130,7 @@ public enum CommandCatalog {
         specs.append(CommandSpec("workspace.open", "Open Workspace…", "Switch to an arrangement you saved",
                                  category: "Workspace", chords: ["wo"]))
         specs.append(CommandSpec("workspace.save", "Save Workspace…", "Save this arrangement of panes under a name",
-                                 category: "Workspace", chords: ["ws"], shortcut: KeyStroke("s", [.command, .shift])))
+                                 category: "Workspace", chords: ["ws"], shortcut: KeyStroke("s", [.command, .option])))
         return specs
     }()
 

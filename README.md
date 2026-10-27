@@ -48,7 +48,7 @@ The M3 interface code has not yet been compiled on macOS: CI's macOS runners wer
 - **Panes are frames, content is cargo.** `⌃⇥` cycles the focused pane
   through score, source, compiler output and a terminal, and `⌃1`…`⌃0`
   jump straight to one. The frames never move. `⌘1`…`⌘5` switch layouts,
-  `⌘⇧S` saves a workspace, and `␣ w o` opens one.
+  `⌘⌥S` saves a workspace (⌘⇧S stays Save As), and `␣ w o` opens one.
 - **Export.** `⌘E` exports a PDF with point-and-click disabled, then checks
   the output for local filesystem paths.
 

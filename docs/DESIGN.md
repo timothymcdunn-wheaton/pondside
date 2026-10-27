@@ -657,3 +657,42 @@ highlighting on real scores. C comes next, and mouse entry after it.
   line, because those are the only controls the window has. New controls
   must call `HelpOverlay.register`.
 - The UI half of M3 has not been compiled; see the README status.
+
+### M8 (first part) — the timing engine
+
+**Plan change: seconds are the MIDI's seconds.** The cues.json sketch in
+§4 had tempo ramps, holds and unmetered segments. The composer's working
+setup (the lilypond-supercollider workflow: `timing.ily`, `playback.ily`,
+`lily_timing.py`) shows a better rule. The mockup is rendered from
+LilyPond's MIDI, and the MIDI only knows tempo steps. A fermata, a
+caesura or a timed section is therefore a hidden `\playTempo` step,
+and a ritardando is a run of steps. A timing model with ramps would
+disagree with the audio it is meant to sync. So:
+
+- `TempoMap` is stepped, defaulting to 60 quarters a minute as the MIDI
+  does. A tempo at moment *m* applies from *m*. When two different
+  tempos land on one moment, Pondside warns: that is the "never put a
+  `\playTempo` where a printed `\tempo` is" rule.
+- `TimingDump` (PondsideEngrave) installs an engraver through
+  `-dinclude-settings`. It writes timing.ily's rows (`tempo`, `text`
+  with `cue N` from `\ecue`'s `cue-label` and marks from `timing-label`,
+  `note`, `group`), plus the position in the bar and `meter` rows, so
+  each cue gets a measure:beat. `TimingLog` reads both formats, so an
+  existing `score.timing` works too.
+- `CueSheet` is cues.json. Per cue it holds the exact moment, measure,
+  beat, seconds, samples at the project rate, a stable id (name plus
+  occurrence) and an SC handler name. It also carries the tempo steps,
+  the other marks (`improv 1`, `end`), the duration and warnings. Its
+  `cuesText` is byte-for-byte the `piece.cues` format, so the existing
+  `~scoreSync` loader can read Pondside's output.
+- CLI: `pondside cues score.ly [--format json|cues] [--rate 48000]` and
+  `pondside timeline score.ly`.
+
+**Next in M8:** the `.scd` handler sync (add stubs, comment out orphans,
+never touch a handler body), the sample-rate guard in the quark, the
+Cue Inspector pane, and the mockup render through MuseScore with silence
+detection.
+
+**Known limit:** a file with several `\score` blocks that have layouts
+restarts moments in each one. The dump should be pointed at the score
+the MIDI comes from.

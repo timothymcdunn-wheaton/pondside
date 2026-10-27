@@ -1,6 +1,7 @@
 import Foundation
 import PondsideCore
 import PondsideEngrave
+import PondsideTiming
 
 // `pondside` — the headless command-line surface. Links only portable
 // modules, so it runs on any platform Swift does.
@@ -18,6 +19,12 @@ commands:
       List the point-and-click links in a canvas SVG with their bounds.
   doctor [--json]
       List every LilyPond installation found, with version and origin.
+  cues <file.ly> [--format json|cues] [--rate <hz>] [--out <file>]
+      Every \\ecue with its moment, bar, beat, seconds and samples, timed
+      exactly as LilyPond's MIDI plays (hidden \\playTempo included).
+      --format cues writes the piece.cues lines SuperCollider loaders read.
+  timeline <file.ly> [--json]
+      The tempo map: each tempo step's moment, seconds and quarter notes per minute.
   watch <file> --on-change <command>
       Run a shell command whenever the file's content changes.
   version
@@ -209,6 +216,47 @@ func watch(_ args: Arguments) async throws -> Int32 {
     while true { try await Task.sleep(for: .seconds(3600)) }
 }
 
+func cueSheet(_ args: Arguments) async throws -> CueSheet {
+    let source = try sourceURL(args)
+    let lily = try await resolveLilyPond(for: source)
+    let rate = try args.options["rate"].map { r -> Int in
+        guard let v = Int(r), v > 0 else { throw CLIError("--rate needs a sample rate in Hz") }
+        return v
+    } ?? 48000
+    let log = try await TimingDump.run(lily, source: source)
+    return CueSheet(log: log, score: source.lastPathComponent, sampleRate: rate)
+}
+
+func cues(_ args: Arguments) async throws -> Int32 {
+    let sheet = try await cueSheet(args)
+    for w in sheet.warnings { printErr("warning: \(w)") }
+    let data: Data
+    switch args.options["format"] ?? "json" {
+    case "json": data = try sheet.json() + Data("\n".utf8)
+    case "cues": data = Data(sheet.cuesText.utf8)
+    case let f: throw CLIError("unknown format '\(f)' (json, cues)")
+    }
+    if let out = args.options["out"] {
+        try data.write(to: URL(fileURLWithPath: out), options: .atomic)
+    } else {
+        FileHandle.standardOutput.write(data)
+    }
+    return 0
+}
+
+func timeline(_ args: Arguments) async throws -> Int32 {
+    let sheet = try await cueSheet(args)
+    if args.flags.contains("json") {
+        try printJSON(sheet.tempo)
+    } else {
+        for t in sheet.tempo {
+            print("\(t.moment)\t" + String(format: "%.3f", t.seconds) + "\t\(t.bpm)")
+        }
+        if let d = sheet.duration { print("end\t" + String(format: "%.3f", d)) }
+    }
+    return 0
+}
+
 enum DiagnosticFormatter {
     static func line(_ d: Diagnostic) -> String {
         var loc = ""
@@ -224,7 +272,7 @@ let command = argv.count > 1 ? argv[1] : "help"
 let rest = argv.dropFirst(2)
 
 do {
-    let args = try Arguments(rest, valued: ["format", "out", "on-change"])
+    let args = try Arguments(rest, valued: ["format", "out", "on-change", "rate"])
     let status: Int32
     switch command {
     case "render": status = try await render(args)
@@ -232,6 +280,8 @@ do {
     case "links": status = try links(args)
     case "doctor": status = try await doctor(args)
     case "watch": status = try await watch(args)
+    case "cues": status = try await cues(args)
+    case "timeline": status = try await timeline(args)
     case "version", "--version": print("pondside 0.1.0 (M1)"); status = 0
     case "help", "--help", "-h": print(usage); status = 0
     default:

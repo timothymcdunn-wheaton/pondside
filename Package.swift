@@ -20,14 +20,15 @@ var dependencies: [Package.Dependency] = []
 var targets: [Target] = [
     // Portable — no AppKit, no SwiftUI, no Apple-only Foundation.
     .target(name: "PondsideCore"),
-    .target(name: "PondsideEngrave", dependencies: ["PondsideCore"]),
+    .target(name: "PondsideEngrave", dependencies: ["PondsideCore", "PondsideTiming"]),
     .target(name: "PondsideTiming", dependencies: ["PondsideCore"]),
     .target(name: "PondsideLexicon", dependencies: ["PondsideCore"]),
     .target(name: "PondsideBridge", dependencies: ["PondsideCore", "PondsideEngrave", "PondsideTiming", "PondsideLexicon"]),
-    .executableTarget(name: "PondsideCLI", dependencies: ["PondsideCore", "PondsideEngrave", "PondsideBridge"]),
+    .executableTarget(name: "PondsideCLI", dependencies: ["PondsideCore", "PondsideEngrave", "PondsideTiming", "PondsideBridge"]),
 
     // Shared real-world scores live in Tests/Scores and are read by path.
     .testTarget(name: "PondsideCoreTests", dependencies: ["PondsideCore"]),
+    .testTarget(name: "PondsideTimingTests", dependencies: ["PondsideTiming"]),
     .testTarget(name: "PondsideEngraveTests", dependencies: ["PondsideEngrave"], resources: [.copy("Fixtures")]),
 ]
 
