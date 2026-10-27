@@ -41,7 +41,7 @@ jobs:
           status=0
           swift test --skip-build 2>&1 | tee test.log > /dev/null || status=$?
           echo "──────── summary ────────"
-          grep -E "error:|Fatal error|fatal error|Crash|crashed|corpus:|recovered:|Executed .* tests" test.log | head -150 || true
+          grep -E "error:|Fatal error|fatal error|Crash|crashed|corpus:|recovered:|Pondside benchmark|Executed .* tests" test.log | head -150 || true
           echo "last test started:"; grep -E "Test Case .* started" test.log | tail -1 || true
           exit $status
 

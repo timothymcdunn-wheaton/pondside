@@ -23,17 +23,27 @@ public struct TimingLog: Sendable, Hashable {
             case meter(numerator: Int, denominator: Int)
         }
 
+        /// Where a text event (a cue, a mark) was written, when known.
+        public struct Origin: Sendable, Hashable, Codable {
+            public var file: String
+            public var line: Int
+            /// 0-based Unicode-scalar offset in the line, as point-and-click.
+            public var character: Int
+        }
+
         public var moment: Rational
         public var bar: Int
         /// Position within the bar, in whole notes, when the dump knows it.
         public var measurePosition: Rational?
         public var kind: Kind
+        public var origin: Origin?
 
-        public init(moment: Rational, bar: Int, measurePosition: Rational? = nil, kind: Kind) {
+        public init(moment: Rational, bar: Int, measurePosition: Rational? = nil, kind: Kind, origin: Origin? = nil) {
             self.moment = moment
             self.bar = bar
             self.measurePosition = measurePosition
             self.kind = kind
+            self.origin = origin
         }
     }
 
@@ -63,6 +73,7 @@ public struct TimingLog: Sendable, Hashable {
             guard f.count > i else { continue }
             let values = Array(f[(i + 1)...])
             let kind: Row.Kind
+            var origin: Row.Origin?
             switch f[i] {
             case "tempo":
                 guard let v = values.first.flatMap(Double.init) else { continue }
@@ -70,6 +81,9 @@ public struct TimingLog: Sendable, Hashable {
             case "text":
                 guard let v = values.first else { continue }
                 kind = .text(v)
+                if values.count >= 4, let line = Int(values[2]), let ch = Int(values[3]) {
+                    origin = Row.Origin(file: values[1], line: line, character: ch)
+                }
             case "note":
                 guard values.count >= 2, let midi = Int(values[1]) else { continue }
                 kind = .note(staff: values[0], midi: midi)
@@ -84,20 +98,21 @@ public struct TimingLog: Sendable, Hashable {
             default:
                 continue
             }
-            rows.append(Row(moment: moment, bar: bar, measurePosition: position, kind: kind))
+            rows.append(Row(moment: moment, bar: bar, measurePosition: position, kind: kind, origin: origin))
         }
         self.rows = rows
     }
 
     /// Text rows starting with `prefix`, once per moment and text (every
     /// voice's engraver hears the same event), in score order.
-    public func texts(startingWith prefix: String) -> [(moment: Rational, bar: Int, measurePosition: Rational?, text: String)] {
+    public func texts(startingWith prefix: String)
+        -> [(moment: Rational, bar: Int, measurePosition: Rational?, text: String, origin: Row.Origin?)] {
         var seen = Set<String>()
-        var out: [(moment: Rational, bar: Int, measurePosition: Rational?, text: String)] = []
+        var out: [(moment: Rational, bar: Int, measurePosition: Rational?, text: String, origin: Row.Origin?)] = []
         for r in rows {
             guard case .text(let t) = r.kind, t.hasPrefix(prefix) else { continue }
             let key = "\(r.moment) \(t)"
-            if seen.insert(key).inserted { out.append((r.moment, r.bar, r.measurePosition, t)) }
+            if seen.insert(key).inserted { out.append((r.moment, r.bar, r.measurePosition, t, r.origin)) }
         }
         return out.sorted { $0.moment < $1.moment }
     }

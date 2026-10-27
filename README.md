@@ -13,8 +13,11 @@ The full plan, the schemas, and the parts of the brief I'd change are in
 
 ## Status
 
-**M1 (the loop) and M2 (editing) are done; M2.1 (multi-file scores), mouse entry and M3 (the interface) are in.**
-The M3 interface code has not yet been compiled on macOS: CI's macOS runners were stuck in the queue when it landed.
+**Done:** M1 (the loop), M2 (editing), M2.1 (multi-file scores) and mouse entry.
+**In, with first parts of later milestones:** M3 (the interface), M4 (a warm LilyPond daemon), M6 (CLI, MCP server),
+M7 (the Lexicon) and M8 (the timing engine, cue sheets, SuperCollider handlers and quark). CI builds and tests
+everything on Linux and macOS. The app's UI compiles in CI, but mouse entry and the M3 interface (chords, palette,
+panes, terminal) have not been tried by hand yet. See `docs/DESIGN.md` §7 for what each milestone still lacks.
 
 - **Open and engrave.** Open a `.ly` file. It is engraved by the LilyPond
   you already have, detected on `PATH`, Homebrew, MacPorts or
@@ -49,6 +52,22 @@ The M3 interface code has not yet been compiled on macOS: CI's macOS runners wer
   through score, source, compiler output and a terminal, and `⌃1`…`⌃0`
   jump straight to one. The frames never move. `⌘1`…`⌘5` switch layouts,
   `⌘⌥S` saves a workspace (⌘⇧S stays Save As), and `␣ w o` opens one.
+- **Fast recompiles.** A warm LilyPond process stays loaded for each open
+  score, so a recompile skips LilyPond's startup: 10–20× faster on slow
+  machines. It falls back to a fresh process if anything goes wrong.
+- **Electronics cues.** `pondside cues score.ly` times every `\ecue` exactly
+  as the MIDI plays (hidden `\playTempo` included). `pondside handlers`
+  keeps a SuperCollider file of cue handlers in step with the score
+  without touching your code, and `sc/Pondside` is a quark that plays the
+  mockup and fires them on SuperCollider's clock.
+- **The Lexicon.** `\lexicon "timed-fermata" #'((seconds . 6)) { g'1 }`:
+  reusable, parametric notation with typed, range-checked params, in
+  three scopes (core, user, project). Entries can carry a sound, which
+  places a cue. Agents browse it in tiers: `pondside lexicon list` or the
+  MCP resources.
+- **For agents.** `pondside mcp` is an MCP server: check, query (events
+  with resolved absolute pitches), render, cues, Lexicon checks, and the
+  Lexicon as resources. See [docs/API.md](docs/API.md).
 - **Export.** `⌘E` exports a PDF with point-and-click disabled, then checks
   the output for local filesystem paths.
 
@@ -95,7 +114,13 @@ pondside check score.ly --json   # compile, report diagnostics
 pondside render score.ly --format pdf --out build/
 pondside links score.svg --json  # point-and-click map of a canvas SVG
 pondside watch score.ly --on-change 'pondside render score.ly'
+pondside cues score.ly --format cues     # seconds<TAB>bar<TAB>cue N, for SuperCollider
+pondside handlers score.ly --scd cues.scd
+pondside lexicon list                    # tier 0 of the Lexicon
+pondside mcp                             # MCP server on stdio (claude mcp add pondside -- pondside mcp)
 ```
+
+Everything the CLI and MCP server offer is documented in [docs/API.md](docs/API.md).
 
 ## Layout
 

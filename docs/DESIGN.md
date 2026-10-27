@@ -736,3 +736,42 @@ the MIDI comes from.
 resources (they come with M6), `\pondsideLexiconLock`, and evaluating
 sound params into cues.json (`soundParams` exists; the cue sheet needs the
 span length from the dump).
+
+### M4 — speed (first part): the warm daemon
+
+**Measured first** (LilyPond 2.24.3, CI-class Linux container): a
+two-bar score takes 3.3–3.6 s cold, and 2.9 s of that is startup (Guile
+and the init files). The daemon removes the startup cost from every
+compile after the first.
+
+**How:** LilyPond already compiles a list of files in one process,
+resetting its session between them (`lilypond-all`). `LilyPondDaemon`
+starts `lilypond -e <expr> placeholder.ly`. The expression loads a small
+loop into the `(lily)` module: it initialises the session once
+(`declarations-init.ly` may only be parsed once per process), then for
+each `<source>\t<settings>` line on stdin runs the per-file half of
+`lilypond-all`: parse, check expected warnings, `session-terminate`,
+restore options, reset fonts. A marker line on stderr ends each job.
+Nothing in LilyPond is patched, and no private API is called outside
+the `(lily)` module's own procedures.
+
+- **Same output as cold.** The working directory is the score's folder
+  (Scheme `load` resolves there). Output goes to the job's folder through
+  `\paper { output-filename = … }` in the job's settings file, which also
+  carries the point-and-click session settings. Those settings are now
+  idempotent, because they are read once per job in one process.
+- **Robust.** A score's stdout is merged into stderr, so its output stays
+  with its job. A dead process, a stuck job (120 s) or any daemon error
+  falls back to a cold compile, and the daemon restarts on the next
+  compile and every 150 jobs. Export never uses the daemon.
+- **Results:** warm compiles of the test scores take 0.17–0.38 s here,
+  against 3.3–3.5 s cold, a 10–20× speed-up. CI prints
+  `Pondside benchmark:` for the multi-file fixture on every run.
+
+**Still to do in M4:** the windowed preview compile of the edited
+`\score` (only where a file has several), content-addressed caching of
+rendered systems, and the provisional instant rendering of an edit
+before LilyPond answers. With a warm compile at a few hundred
+milliseconds on slow hardware, the windowed compile matters less than
+the brief assumed. Provisional rendering is what still separates
+"fast" from "instant".

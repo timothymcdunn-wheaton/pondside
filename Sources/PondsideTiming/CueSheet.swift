@@ -23,6 +23,8 @@ public struct CueSheet: Codable, Sendable, Hashable {
         public var seconds: Double
         public var samples: Int
         public var handler: String
+        /// Where the cue is written; absent for generated cues (Lexicon sounds).
+        public var source: TimingLog.Row.Origin?
     }
 
     public struct TempoStep: Codable, Sendable, Hashable {
@@ -70,7 +72,7 @@ public struct CueSheet: Codable, Sendable, Hashable {
             cues.append(Cue(id: n == 0 ? "cue-\(name)" : "cue-\(name)-\(n + 1)", name: name, index: i + 1,
                             position: position(t.moment, t.bar, t.measurePosition),
                             seconds: seconds, samples: Int((seconds * Double(sampleRate)).rounded()),
-                            handler: CueSheet.handlerName(name)))
+                            handler: CueSheet.handlerName(name), source: t.origin))
         }
         var warnings: [String] = map.conflicts.map {
             "two different tempos at moment \($0): a hidden \\playTempo must not share a moment with a printed \\tempo"

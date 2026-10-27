@@ -58,8 +58,15 @@ public enum TimingDump {
          ((text-script-event engraver event)
           (let ((cue (ly:event-property event 'cue-label #f))
                 (mark (ly:event-property event 'timing-label #f)))
-            (cond (cue (pondside-timing-row context "text" (string-append "cue " cue)))
-                  (mark (pondside-timing-row context "text" mark)))))
+            ; Where the event was written, when it has a place (a Lexicon
+            ; cue is generated and has none): file, line, character.
+            (let* ((loc (ly:event-property event 'origin #f))
+                   (where (if (ly:input-location? loc)
+                              (let ((o (ly:input-file-line-char-column loc)))
+                                (list (car o) (cadr o) (caddr o)))
+                              '())))
+              (cond (cue (apply pondside-timing-row context "text" (string-append "cue " cue) where))
+                    (mark (apply pondside-timing-row context "text" mark where))))))
          ((note-event engraver event)
           (let ((p (ly:event-property event 'pitch #f)))
             (if (ly:pitch? p)

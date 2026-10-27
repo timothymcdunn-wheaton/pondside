@@ -100,7 +100,17 @@ final class ScoreDocument {
     /// LilyPond's output from the latest compile, for the compiler-output pane.
     private(set) var lastLog = ""
     private(set) var pages: [EngravedPage] = []
-    private(set) var installation: LilyPondInstallation?
+    private(set) var installation: LilyPondInstallation? {
+        didSet {
+            if installation != oldValue {
+                let old = daemon
+                Task { await old?.stop() }
+                daemon = installation.map { LilyPondDaemon(installation: $0) }
+            }
+        }
+    }
+    /// The warm LilyPond for canvas compiles (M4); one per open score.
+    private var daemon: LilyPondDaemon?
     private(set) var declaredVersion: LilyPondVersion?
     /// Files that contribute notes but produced no point-and-click links.
     private(set) var unlinkedFiles: [SourceFile] = []
@@ -147,6 +157,8 @@ final class ScoreDocument {
 
     func close() {
         flushPendingSaves()
+        let d = daemon
+        Task { await d?.stop() }
         for f in files {
             f.watcher?.stop()
             f.watcher = nil
@@ -301,7 +313,7 @@ final class ScoreDocument {
         }
         compileRunning = true
         setStatus(.compiling)
-        let engraver = LilyPondEngraver(installation: installation)
+        let engraver = LilyPondEngraver(installation: installation, daemon: daemon)
         let source = url
         // Exactly what LilyPond will read, so links and diagnostics can be
         // mapped back onto text that has moved on since.

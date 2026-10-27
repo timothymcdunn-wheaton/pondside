@@ -1,5 +1,6 @@
 import Foundation
 import PondsideCore
+import PondsideTiming
 
 /// What a compile is for. The distinction is a safety property: canvas
 /// output embeds absolute source paths for point-and-click; export output
@@ -23,6 +24,13 @@ public struct EngraveResult: Sendable {
     public var duration: Duration
     public var succeeded: Bool { exitStatus == 0 && !outputFiles.isEmpty }
     public var errors: [Diagnostic] { diagnostics.filter { $0.severity == .error || $0.severity == .fatal } }
+    /// The timing rows a canvas compile logged (empty for exports).
+    public var timing: TimingLog { TimingLog(parsing: log, prefix: TimingDump.marker) }
+    /// LilyPond's own messages, without Pondside's timing rows.
+    public var messages: String {
+        log.split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.contains("PONDSIDE-TIMING") }.joined(separator: "\n")
+    }
 }
 
 public enum EngraveError: Error, CustomStringConvertible {
@@ -36,15 +44,18 @@ public enum EngraveError: Error, CustomStringConvertible {
     }
 }
 
-/// Drives one LilyPond executable. Stateless; safe to share.
+/// Drives one LilyPond executable. Safe to share.
 ///
-/// M1 spawns a process per compile. M4 replaces this with a persistent
-/// daemon holding warm Guile state behind the same interface.
+/// Canvas compiles go through a warm `LilyPondDaemon` when one is given
+/// (M4), falling back to a fresh process if it fails; exports always use a
+/// fresh process.
 public struct LilyPondEngraver: Sendable {
     public var installation: LilyPondInstallation
+    public var daemon: LilyPondDaemon?
 
-    public init(installation: LilyPondInstallation) {
+    public init(installation: LilyPondInstallation, daemon: LilyPondDaemon? = nil) {
         self.installation = installation
+        self.daemon = daemon
     }
 
     /// The command-line arguments for a compile. Public so tests can pin the
@@ -71,12 +82,20 @@ public struct LilyPondEngraver: Sendable {
     /// Compiles `source` into `outputDirectory`, which should be empty or
     /// private to this compile. Pages are returned in page order.
     public func engrave(_ source: URL, purpose: EngravePurpose, outputDirectory: URL) async throws -> EngraveResult {
+        if case .canvas = purpose, let daemon {
+            do {
+                return try await daemon.engrave(source, outputDirectory: outputDirectory, extraSettings: TimingDump.listener)
+            } catch {
+                // A dead or stuck daemon must never cost an engraving.
+            }
+        }
         try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
         let base = outputDirectory.appendingPathComponent(source.deletingPathExtension().lastPathComponent)
         var settings: URL?
         if case .canvas = purpose {
             let url = outputDirectory.appendingPathComponent("pondside-session.ily")
-            try Data(SessionSettings.canvas.utf8).write(to: url)
+            // Every canvas compile also logs timing, so cue times are always current.
+            try Data((SessionSettings.canvas + TimingDump.listener).utf8).write(to: url)
             settings = url
         }
         let clock = ContinuousClock()
@@ -174,13 +193,18 @@ public enum SessionSettings {
     /// Both go through `ly:set-option`, so wrapping it catches them and any
     /// raw `#(ly:set-option 'point-and-click #f)`: only `#t` gets through.
     /// Verified with LilyPond 2.24.3 (DESIGN.md §7, M2.1).
+    /// Idempotent, because the warm daemon reads it once per compile in
+    /// one long-lived process: the wrapper is installed only once.
     public static let canvas = """
-    #(let ((pondside-original-set-option ly:set-option))
-       (set! ly:set-option
-             (lambda (sym . rest)
-               (if (and (eq? sym 'point-and-click) (pair? rest) (not (eq? (car rest) #t)))
-                   #f
-                   (apply pondside-original-set-option sym rest)))))
+    #(let ((lily (resolve-module '(lily))))
+       (if (not (module-defined? lily 'pondside-original-set-option))
+           (let ((original ly:set-option))
+             (module-define! lily 'pondside-original-set-option original)
+             (set! ly:set-option
+                   (lambda (sym . rest)
+                     (if (and (eq? sym 'point-and-click) (pair? rest) (not (eq? (car rest) #t)))
+                         #f
+                         (apply original sym rest)))))))
 
     """
 }

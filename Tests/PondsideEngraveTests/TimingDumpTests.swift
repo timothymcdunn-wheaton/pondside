@@ -44,5 +44,14 @@ final class TimingDumpTests: XCTestCase {
         XCTAssertEqual(sheet.cues.map(\.position.moment), ["1/2", "2"])
         XCTAssertEqual(sheet.tempo.map(\.bpm), [120, 60])
         XCTAssertTrue(sheet.warnings.isEmpty, "\(sheet.warnings)")
+        // Each cue knows where it is written (the \ecue itself).
+        XCTAssertEqual(sheet.cues.map { $0.source?.line }, [9, 11])
+        XCTAssertEqual(sheet.cues.map { $0.source?.character }, [10, 10])
+
+        // A canvas compile logs the same timing for free.
+        let dir2 = dir.appendingPathComponent("canvas")
+        let canvas = try await LilyPondEngraver(installation: lily).engrave(file, purpose: .canvas, outputDirectory: dir2)
+        XCTAssertEqual(CueSheet(log: canvas.timing, score: "cues.ly").cues.map(\.seconds), [1.0, 6.5])
+        XCTAssertFalse(canvas.messages.contains("PONDSIDE-TIMING"))
     }
 }
