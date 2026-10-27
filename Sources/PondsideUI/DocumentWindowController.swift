@@ -2,6 +2,7 @@ import AppKit
 import UniformTypeIdentifiers
 import PondsideCore
 import PondsideEngrave
+import PondsideTiming
 
 /// One window: source and score side by side, a one-line status bar, and
 /// bidirectional point-and-click between them. The score is an editor too:
@@ -14,6 +15,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     private let canvasScroll = NSScrollView()
     private let editorPane = NSView()
     private let compilerOutput = CompilerOutputView(frame: .zero)
+    private let cueInspector = CueInspectorView(frame: .zero)
     private var panes: PaneHost!
     private var help: HelpOverlay!
     private var chord = ChordRecognizer()
@@ -690,6 +692,7 @@ extension DocumentWindowController: ScoreDocumentDelegate {
         canvas.setPages(score.pages)
         if first { canvas.fitWidth() }
         compilerOutput.show(score.lastLog)
+        cueInspector.show(score.cueSheet, scoreFolder: score.url.deletingLastPathComponent())
         rebuildEngravingMap()
         refreshHighlight(reveal: false)
         showDiagnostics()
@@ -743,6 +746,7 @@ extension DocumentWindowController: CommandResponder {
         case "go.nextFile": nextFile(nil)
         case "go.previousFile": previousFile(nil)
         case "go.error": goToError()
+        case "go.cue": showCuePicker()
         case "go.first":
             if let i = tree.events.firstIndex(where: { $0.acceptsNoteEntry }) { selectEvents([i]) }
         case "go.last":
@@ -932,6 +936,38 @@ extension DocumentWindowController: CommandResponder {
         }
     }
 
+    private func showCuePicker() {
+        let cues = score.cueSheet?.cues ?? []
+        guard !cues.isEmpty else {
+            statusBar.flash("No cues in the score yet: \\ecue \"1\" on a note places one")
+            return
+        }
+        showPicker(placeholder: "Go to cue", choices: cues.map { c in
+            (title: "cue \(c.name)", detail: "bar \(c.position.measure) · \(CueInspectorView.timecode(c.seconds))" as String?)
+        }) { [weak self] i in
+            guard cues.indices.contains(i) else { return }
+            self?.reveal(cues[i])
+        }
+    }
+
+    /// Selects a cue's \ecue in the source, which highlights its note.
+    private func reveal(_ cue: CueSheet.Cue) {
+        guard let origin = cue.source else {
+            statusBar.flash("cue \(cue.name) is generated (a Lexicon sound), so it has no line of its own")
+            return
+        }
+        guard let file = score.file(for: origin.file) else {
+            statusBar.flash("cue \(cue.name) is in \(origin.file), outside this score's files")
+            return
+        }
+        if file !== activeFile { showFile(file) }
+        let text = editor.text
+        guard let i = SourceText(text).index(of: SourcePosition(line: origin.line, character: origin.character)) else { return }
+        let offset = text.utf8.distance(from: text.startIndex, to: i)
+        setSelection(utf8: offset..<offset)
+        statusBar.flash("cue \(cue.name) · bar \(cue.position.measure) · \(CueInspectorView.timecode(cue.seconds))")
+    }
+
     private static let dynamics = ["ppp", "pp", "p", "mp", "mf", "f", "ff", "fff", "fp", "sf", "sfz", "rfz"]
 
     private func showDynamicPicker(events: [Int]) {
@@ -972,7 +1008,7 @@ extension DocumentWindowController: CommandResponder {
     private static let layoutKey = "Pondside.layout"
     private static let workspacesKey = "Pondside.workspaces"
     /// Content that exists today; the rest shows a placeholder naming its milestone.
-    private static let builtContent: [PaneContent] = [.score, .lilypond, .compilerOutput, .terminal]
+    private static let builtContent: [PaneContent] = [.score, .lilypond, .compilerOutput, .terminal, .cues]
 
     private static func savedLayout() -> PaneLayout {
         if let data = UserDefaults.standard.data(forKey: layoutKey),
@@ -995,6 +1031,10 @@ extension DocumentWindowController: CommandResponder {
             compilerOutput.show(score.lastLog)
             return compilerOutput
         case .terminal: return TerminalPane(directory: score.url.deletingLastPathComponent())
+        case .cues:
+            cueInspector.onJump = { [weak self] cue in self?.reveal(cue) }
+            cueInspector.show(score.cueSheet, scoreFolder: score.url.deletingLastPathComponent())
+            return cueInspector
         default: return PanePlaceholder(content)
         }
     }
@@ -1003,6 +1043,7 @@ extension DocumentWindowController: CommandResponder {
         switch content {
         case .score: return canvas
         case .lilypond: return editor.textView
+        case .cues: return cueInspector.responder
         case .terminal: return (panes.view(for: .terminal) as? TerminalPane)?.responder ?? panes.view(for: .terminal)
         default: return panes.view(for: content)
         }

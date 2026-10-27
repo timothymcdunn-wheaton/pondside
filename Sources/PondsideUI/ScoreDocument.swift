@@ -1,6 +1,7 @@
 import AppKit
 import PondsideCore
 import PondsideEngrave
+import PondsideTiming
 
 enum CompileStatus: Equatable {
     case idle
@@ -99,6 +100,8 @@ final class ScoreDocument {
     private(set) var status: CompileStatus = .idle
     /// LilyPond's output from the latest compile, for the compiler-output pane.
     private(set) var lastLog = ""
+    /// Cue times from the latest compile (every canvas compile logs them).
+    private(set) var cueSheet: CueSheet?
     private(set) var pages: [EngravedPage] = []
     private(set) var installation: LilyPondInstallation? {
         didSet {
@@ -142,7 +145,11 @@ final class ScoreDocument {
     }
 
     func file(for path: String) -> SourceFile? {
-        files.first { $0.matches(path: path) }
+        if let f = files.first(where: { $0.matches(path: path) }) { return f }
+        // LilyPond reports some paths relative to the root's folder.
+        guard !path.hasPrefix("/") else { return nil }
+        let absolute = url.deletingLastPathComponent().appendingPathComponent(path).path
+        return files.first { $0.matches(path: absolute) }
     }
 
     func open() {
@@ -345,7 +352,10 @@ final class ScoreDocument {
 
     private func finish(_ outcome: Outcome) {
         compileRunning = false
-        lastLog = outcome.result?.log ?? outcome.error ?? ""
+        lastLog = outcome.result?.messages ?? outcome.error ?? ""
+        if let result = outcome.result, result.succeeded {
+            cueSheet = CueSheet(log: result.timing, score: url.lastPathComponent)
+        }
         if let result = outcome.result {
             for f in files {
                 f.compiledText = f.pendingSnapshot

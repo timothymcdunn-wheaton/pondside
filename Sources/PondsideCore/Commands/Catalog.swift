@@ -31,6 +31,8 @@ public enum CommandCatalog {
                     requires: .severalFiles, chords: ["gp"], shortcut: KeyStroke("[", [.command, .shift])),
         CommandSpec("go.error", "Go to Error", "Jump to the next compiler error in the source", category: "Go", requires: .errors,
                     chords: ["ge"], shortcut: KeyStroke("'", .command)),
+        CommandSpec("go.cue", "Go to Cue…", "Jump to an electronics cue in the source and the score", category: "Go",
+                    chords: ["gc"]),
         CommandSpec("go.first", "Go to First Note", "Select the first note of the file", category: "Go",
                     chords: ["gg"]),
         CommandSpec("go.last", "Go to Last Note", "Select the last note of the file", category: "Go",
