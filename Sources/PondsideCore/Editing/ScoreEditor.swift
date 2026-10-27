@@ -208,8 +208,10 @@ public struct ScoreEditor: Sendable {
 
     /// Inserts a note (step 0…6, or nil for a rest) after `event`, choosing
     /// the octave nearest the previous pitch and the key's accidental.
-    /// `duration` is the armed duration; nil means "inherit".
-    public func insert(step: Int?, after eventIndex: Int, duration: DurationValue?) -> ScoreEdit? {
+    /// `duration` is the armed duration; nil means "inherit". An explicit
+    /// `octave` (mouse entry: the clicked staff position) overrides the
+    /// nearest-octave choice.
+    public func insert(step: Int?, after eventIndex: Int, duration: DurationValue?, octave explicitOctave: Int? = nil) -> ScoreEdit? {
         let ev = events[eventIndex]
         var edits: [TextEdit] = []
         let inheritedHere = ev.effectiveDuration
@@ -223,10 +225,11 @@ public struct ScoreEditor: Sendable {
             let previous = ev.notes.first.map { notes[$0].absolute } ?? lastPitch(before: ev.range.upperBound)
             let reference = ev.chainRefAfter.map { notes[$0].absolute }
             let octave: Int
-            switch ev.octaveMode {
-            case .relative:
+            if let explicitOctave {
+                octave = explicitOctave
+            } else if case .relative = ev.octaveMode {
                 octave = OctaveRules.nearestOctave(step: step, to: reference ?? .relativeDefault)
-            case .fixed, .absolute:
+            } else {
                 octave = OctaveRules.nearestOctave(step: step, to: previous ?? Pitch(step: 0, octave: 1))
             }
             let pitch = Pitch(step: step, alteration: alteration, octave: octave)

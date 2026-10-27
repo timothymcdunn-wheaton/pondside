@@ -89,6 +89,15 @@ final class ScoreEditorTests: XCTestCase {
         XCTAssertEqual(pitches(out2), ["0:0:1", "0:0:1", "6:0:0", "3:0:1"])
     }
 
+    func testInsertAtAnExplicitOctave() {
+        // Mouse entry: g'' after e' in relative mode; f keeps sounding f'.
+        let out = applying("\\relative c' { c4 e f }", at: "e f") { $0.insert(step: 4, after: $1, duration: nil, octave: 2) }!
+        XCTAssertEqual(out, "\\relative c' { c4 e g' f, }")
+        XCTAssertEqual(pitches(out), ["0:0:1", "2:0:1", "4:0:2", "3:0:1"])
+        XCTAssertEqual(applying("{ c'4 d' }", at: "c'4") { $0.insert(step: 0, after: $1, duration: nil, octave: -1) },
+                       "{ c'4 c, d' }")
+    }
+
     func testInsertWithDurationProtectsTheNext() {
         let out = applying("{ c'4 d' e' }", at: "c'4") { $0.insert(step: 1, after: $1, duration: DurationValue(log: 3)) }!
         XCTAssertEqual(out, "{ c'4 d'8 d'4 e' }")

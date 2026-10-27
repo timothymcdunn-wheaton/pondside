@@ -52,7 +52,8 @@ public enum InputAction: Hashable, Sendable {
 /// | `( ) ~ [ ]` | slur, tie, beam: toggled on the selection |
 /// | `-.` `->` `^-` `_1` … | articulations and fingerings, exactly as typed in LilyPond |
 /// | `\trill⏎` | any post-event command, typed as in LilyPond |
-/// | `⌫` | delete · `⎋` cancel / deselect · `⏎` edit in source |
+/// | `⌫` | delete · `⎋` cancel / deselect / disarm · `⏎` edit in source |
+/// | click a staff | with a duration armed: place a note there (mouse entry) |
 ///
 /// Duration entry works both ways: with a note selected it changes that note
 /// (pitch-before-duration); with nothing selected it arms the next insertion

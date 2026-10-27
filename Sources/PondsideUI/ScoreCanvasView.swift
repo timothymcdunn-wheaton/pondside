@@ -12,6 +12,10 @@ protocol ScoreCanvasDelegate: AnyObject {
     func canvasClickedUnlinkedMusic(_ canvas: ScoreCanvasView)
     /// A key pressed while the score has focus. Return true if handled.
     func canvas(_ canvas: ScoreCanvasView, handleKey event: NSEvent) -> Bool
+    /// Whether clicking an empty staff places a note (a duration is armed).
+    func canvasWantsMouseEntry(_ canvas: ScoreCanvasView) -> Bool
+    /// A click on empty staff space while mouse entry is wanted.
+    func canvas(_ canvas: ScoreCanvasView, clickedStaff staff: Staff, at point: Point, on page: EngravedPage)
 }
 
 /// The score surface: pages floating on the dark field.
@@ -152,6 +156,12 @@ final class ScoreCanvasView: NSView {
         window?.makeFirstResponder(self)
         let tolerance = 0.3 / max(zoom, 0.5)
         let link = v.rendered?.page.hitTest(p, tolerance: tolerance)?.link
+        if link == nil, let page = v.rendered?.page, delegate?.canvasWantsMouseEntry(self) == true,
+           let staff = page.staff(at: p, among: v.staves) {
+            v.ghost = nil
+            delegate?.canvas(self, clickedStaff: staff, at: p, on: page)
+            return
+        }
         if link == nil, let page = v.rendered?.page,
            page.graphics.contains(where: { $0.bounds.insetBy(-tolerance).contains(p) && $0.bounds.width < page.viewBox.width * 0.5 }) {
             // Something is there, but it can't lead back to the source.
@@ -159,6 +169,22 @@ final class ScoreCanvasView: NSView {
             return
         }
         delegate?.canvas(self, didClick: link, extending: event.modifierFlags.contains(.shift))
+    }
+
+    /// Mouse entry preview: a ghost notehead where a click would place one.
+    fileprivate func pageView(_ v: PageView, hoverAt p: Point?) {
+        guard let p, delegate?.canvasWantsMouseEntry(self) == true, let page = v.rendered?.page,
+              page.hitTest(p, tolerance: 0.3 / max(zoom, 0.5)) == nil,
+              let staff = page.staff(at: p, among: v.staves) else {
+            v.ghost = nil
+            return
+        }
+        v.ghost = Ghost(staff: staff, x: p.x, position: staff.position(ofY: p.y))
+    }
+
+    /// Drops any mouse entry preview (the armed duration was cleared).
+    func clearGhost() {
+        pageViews.forEach { $0.ghost = nil }
     }
 
     fileprivate func pageView(_ v: PageView, selected rect: Rect) {
@@ -195,11 +221,25 @@ final class ScoreCanvasView: NSView {
     }
 }
 
+private struct Ghost: Equatable {
+    var staff: Staff
+    var x: Double
+    var position: Int
+}
+
 /// One sheet of paper. Opaque: nothing ever shows through the music.
 @MainActor
 private final class PageView: NSView {
     weak var owner: ScoreCanvasView?
-    var rendered: RenderedPage? { didSet { needsDisplay = true } }
+    var rendered: RenderedPage? {
+        didSet {
+            staves = rendered?.page.staves ?? []
+            ghost = nil
+            needsDisplay = true
+        }
+    }
+    private(set) var staves: [Staff] = []
+    var ghost: Ghost? { didSet { if ghost != oldValue { needsDisplay = true } } }
     var highlights: [Rect] = [] { didSet { if highlights != oldValue { needsDisplay = true } } }
     var lightsOut = false { didSet { needsDisplay = true } }
     private var dragStart: NSPoint?
@@ -279,6 +319,8 @@ private final class PageView: NSView {
             ctx.strokePath()
         }
 
+        if let ghost { drawGhost(ghost, in: ctx, color: accent) }
+
         if let dragRect {
             ctx.setFillColor(accent.withAlphaComponent(0.08).cgColor)
             ctx.fill(dragRect)
@@ -286,6 +328,46 @@ private final class PageView: NSView {
             ctx.setLineWidth(1)
             ctx.stroke(dragRect.insetBy(dx: 0.5, dy: 0.5))
         }
+    }
+
+    /// The notehead a click would place, with any ledger lines it needs.
+    /// An overlay in the accent colour: the music is never recoloured.
+    private func drawGhost(_ ghost: Ghost, in ctx: CGContext, color: NSColor) {
+        let staff = ghost.staff, space = staff.space
+        let y = staff.y(ofPosition: ghost.position)
+        let head = viewRect(for: Rect(x: ghost.x - 0.65 * space, y: y - 0.5 * space, width: 1.3 * space, height: space))
+        ctx.setFillColor(color.withAlphaComponent(0.55).cgColor)
+        ctx.fillEllipse(in: head)
+        ctx.setStrokeColor(color.withAlphaComponent(0.7).cgColor)
+        ctx.setLineWidth(max(1, 0.12 * space * scale))
+        var ledgers: [Int] = []
+        if ghost.position <= -2 { ledgers = Array(stride(from: -2, through: ghost.position, by: -2)) }
+        if ghost.position >= 10 { ledgers = Array(stride(from: 10, through: ghost.position, by: 2)) }
+        for p in ledgers {
+            let r = viewRect(for: Rect(x: ghost.x - space, y: staff.y(ofPosition: p), width: 2 * space, height: 0))
+            ctx.move(to: CGPoint(x: r.minX, y: r.minY))
+            ctx.addLine(to: CGPoint(x: r.maxX, y: r.minY))
+        }
+        ctx.strokePath()
+    }
+
+    private var tracking: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+                                  owner: self, userInfo: nil)
+        addTrackingArea(area)
+        tracking = area
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        owner?.pageView(self, hoverAt: pagePoint(convert(event.locationInWindow, from: nil)))
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        owner?.pageView(self, hoverAt: nil)
     }
 
     override func mouseDown(with event: NSEvent) {

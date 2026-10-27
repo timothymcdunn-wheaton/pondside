@@ -377,6 +377,12 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
         case .select(let step, let extend):
             moveSelection(by: step, extend: extend)
         case .clearSelection:
+            // ⎋ with nothing selected disarms (ends mouse entry).
+            if !hasSelection, noteInput.armedDuration != nil {
+                noteInput.arm(nil)
+                updateInputStatus()
+                return
+            }
             let r = selectionUTF8()
             let end = tree.eventIndex(at: r.upperBound).map { tree.events[$0].range.upperBound } ?? r.upperBound
             setSelection(utf8: end..<end, scroll: false)
@@ -429,6 +435,8 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
 
     private func updateInputStatus() {
         statusBar.setInput(armed: noteInput.armedDuration?.text, buffer: noteInput.bufferText)
+        if noteInput.armedDuration == nil { canvas.clearGhost() }
+        updateHints()
     }
 
     // MARK: Status
@@ -460,6 +468,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
         } else {
             hints = ["Click a note to select it", "←→ walk the score", "⌘J switch pane"]
         }
+        if noteInput.armedDuration != nil { hints.insert("Click a staff to place a note", at: 0) }
         if case .errors = score.status { hints.insert("Errors are underlined in the source", at: 0) }
         statusBar.setHints(Array(hints.prefix(3)))
     }
@@ -594,6 +603,47 @@ extension DocumentWindowController: ScoreCanvasDelegate {
 
     func canvas(_ canvas: ScoreCanvasView, handleKey event: NSEvent) -> Bool {
         handleScoreKey(event)
+    }
+
+    func canvasWantsMouseEntry(_ canvas: ScoreCanvasView) -> Bool {
+        noteInput.armedDuration != nil
+    }
+
+    /// Mouse entry: the staff position is the pitch, the armed duration the
+    /// value, and the note goes after whatever stands to the left.
+    func canvas(_ canvas: ScoreCanvasView, clickedStaff staff: Staff, at point: Point, on page: EngravedPage) {
+        var anchors: [MouseEntry.Anchor] = []
+        var owners: [(file: SourceFile, event: Int)] = []
+        for file in score.files where file.hasNotes {
+            guard let engraved = file.engravedText else { continue }
+            let map = EngravingMap(engraved: engraved, current: file.text)
+            let text = file.text
+            let found = MouseEntry.anchors(on: staff, page: page, tree: file.tree, linkedFrom: { file.matches(path: $0) }) { p in
+                map.engravedOffset(of: p).map { OffsetConversion.utf8(fromUTF16: map.currentOffset(forEngraved: $0), in: text) }
+            }
+            for a in found {
+                owners.append((file, a.ref))
+                anchors.append(MouseEntry.Anchor(bounds: a.bounds, pitch: a.pitch, ref: owners.count - 1))
+            }
+        }
+        switch MouseEntry.target(click: point, staff: staff, anchors: anchors) {
+        case .failure(.nothingBefore):
+            statusBar.flash("Click to the right of a note: mouse entry places the new note after it")
+            NSSound.beep()
+        case .failure(.uncalibrated):
+            statusBar.flash("Mouse entry reads the clef from the notes on a staff; type the first one")
+            NSSound.beep()
+        case .success(let target):
+            let owner = owners[target.after]
+            if owner.file !== activeFile { showFile(owner.file) }
+            guard tree.events[owner.event].acceptsNoteEntry else {
+                statusBar.flash("Notes can't be inserted there; type them in the source")
+                NSSound.beep()
+                return
+            }
+            apply(ScoreEditor(tree).insert(step: target.step, after: owner.event, duration: noteInput.armedDuration,
+                                           octave: target.octave))
+        }
     }
 }
 
