@@ -4,13 +4,20 @@ import PondsideCore
 /// The LilyPond source pane: a TextKit 2 `NSTextView`, configured as a code
 /// editor (no smart quotes, no autocorrect), dark, with a legible mono font.
 ///
-/// Tree-sitter highlighting and LSP-style services arrive in M5; this view
-/// keeps to what M1 needs: editing, external-change merging that preserves
-/// the caret, selection linking, and inline diagnostics.
+/// A score can span several files, so the pane holds one text view per
+/// file and swaps them in place. Each keeps its own caret, scroll position
+/// and undo stack (the file's), exactly like tabs in a code editor.
+///
+/// Highlighting and LSP-style services arrive in M5.
 @MainActor
 final class SourceEditorView: NSView, NSTextViewDelegate {
     let scrollView = NSScrollView()
-    let textView = NSTextView(usingTextLayoutManager: true)
+    /// The visible file's text view.
+    private(set) var textView: NSTextView
+    private(set) var activeKey: URL?
+    private var views: [URL: NSTextView] = [:]
+    private var undoManagers: [ObjectIdentifier: UndoManager] = [:]
+    private var scrollOrigins: [URL: NSPoint] = [:]
 
     /// Called after every user edit with the full new text.
     var onUserEdit: ((String) -> Void)?
@@ -20,6 +27,7 @@ final class SourceEditorView: NSView, NSTextViewDelegate {
     private var applyingProgrammaticChange = false
 
     override init(frame frameRect: NSRect) {
+        textView = NSTextView(usingTextLayoutManager: true)
         super.init(frame: frameRect)
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -36,7 +44,11 @@ final class SourceEditorView: NSView, NSTextViewDelegate {
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
-        let tv = textView
+        configure(textView)
+        scrollView.documentView = textView
+    }
+
+    private func configure(_ tv: NSTextView) {
         tv.minSize = .zero
         tv.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
         tv.isVerticallyResizable = true
@@ -66,9 +78,45 @@ final class SourceEditorView: NSView, NSTextViewDelegate {
         tv.selectedTextAttributes = [.backgroundColor: Theme.accent.withAlphaComponent(0.28)]
         tv.typingAttributes = baseAttributes
         tv.delegate = self
-
-        scrollView.documentView = tv
     }
+
+    /// Shows `key`'s text view, creating it from `text` the first time.
+    func show(_ key: URL, text: String, undoManager: UndoManager) {
+        if let current = activeKey { scrollOrigins[current] = scrollView.contentView.bounds.origin }
+        let view: NSTextView
+        if let existing = views[key] {
+            view = existing
+        } else if activeKey == nil && views.isEmpty {
+            // Reuse the initial view for the first file.
+            view = textView
+            views[key] = view
+            load(text, into: view)
+        } else {
+            view = NSTextView(usingTextLayoutManager: true)
+            configure(view)
+            view.frame = NSRect(origin: .zero, size: scrollView.contentSize)
+            views[key] = view
+            load(text, into: view)
+        }
+        undoManagers[ObjectIdentifier(view)] = undoManager
+        textView = view
+        activeKey = key
+        scrollView.documentView = view
+        view.textContainer?.containerSize = NSSize(width: scrollView.contentSize.width, height: .greatestFiniteMagnitude)
+        if let origin = scrollOrigins[key] {
+            scrollView.contentView.scroll(to: origin)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+        }
+    }
+
+    /// Forgets a file that left the include graph.
+    func forget(_ key: URL) {
+        guard key != activeKey, let view = views.removeValue(forKey: key) else { return }
+        undoManagers.removeValue(forKey: ObjectIdentifier(view))
+        scrollOrigins.removeValue(forKey: key)
+    }
+
+    func hasView(for key: URL) -> Bool { views[key] != nil }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
@@ -79,19 +127,30 @@ final class SourceEditorView: NSView, NSTextViewDelegate {
 
     var text: String { textView.string }
 
-    /// Replaces the whole text (initial load). Clears undo.
-    func load(_ string: String) {
+    private func load(_ string: String, into view: NSTextView) {
         applyingProgrammaticChange = true
-        textView.textStorage?.setAttributedString(NSAttributedString(string: string, attributes: baseAttributes))
-        textView.undoManager?.removeAllActions()
-        textView.setSelectedRange(NSRange(location: 0, length: 0))
+        view.textStorage?.setAttributedString(NSAttributedString(string: string, attributes: baseAttributes))
+        view.setSelectedRange(NSRange(location: 0, length: 0))
         applyingProgrammaticChange = false
     }
 
     /// Merges an external edit as a single minimal replacement, so the caret,
     /// selection and scroll position of untouched text stay exactly where
     /// they were. The change is undoable like any other edit.
-    func mergeExternal(_ newText: String) {
+    func mergeExternal(_ newText: String, into key: URL) {
+        guard let view = views[key] else { return }
+        if view !== textView {
+            applyingProgrammaticChange = true
+            if let r = TextDiff.minimalReplacement(from: view.string, to: newText) {
+                let range = NSRange(location: r.location, length: r.length)
+                if view.shouldChangeText(in: range, replacementString: r.replacement) {
+                    view.textStorage?.replaceCharacters(in: range, with: NSAttributedString(string: r.replacement, attributes: baseAttributes))
+                    view.didChangeText()
+                }
+            }
+            applyingProgrammaticChange = false
+            return
+        }
         guard let r = TextDiff.minimalReplacement(from: textView.string, to: newText) else { return }
         let range = NSRange(location: r.location, length: r.length)
         let oldSelections = textView.selectedRanges.map(\.rangeValue)
@@ -114,8 +173,8 @@ final class SourceEditorView: NSView, NSTextViewDelegate {
     }
 
     /// Applies an edit made in the score as an ordinary, undoable text
-    /// change. Score and source share the window's undo manager, so ⌘Z in
-    /// either pane undoes both kinds of edit in order.
+    /// change on the file's own undo stack, which the window also uses, so
+    /// ⌘Z in either pane undoes both kinds of edit in order.
     func replace(_ range: NSRange, with string: String, actionName: String) {
         guard textView.shouldChangeText(in: range, replacementString: string) else { return }
         textView.textStorage?.replaceCharacters(in: range, with: NSAttributedString(string: string, attributes: baseAttributes))
@@ -148,13 +207,17 @@ final class SourceEditorView: NSView, NSTextViewDelegate {
 
     // MARK: NSTextViewDelegate
 
+    func undoManager(for view: NSTextView) -> UndoManager? {
+        undoManagers[ObjectIdentifier(view)]
+    }
+
     func textDidChange(_ notification: Notification) {
-        guard !applyingProgrammaticChange else { return }
+        guard !applyingProgrammaticChange, (notification.object as? NSTextView) === textView else { return }
         onUserEdit?(textView.string)
     }
 
     func textViewDidChangeSelection(_ notification: Notification) {
-        guard !applyingProgrammaticChange else { return }
+        guard !applyingProgrammaticChange, (notification.object as? NSTextView) === textView else { return }
         onSelectionChange?(textView.selectedRange())
     }
 }

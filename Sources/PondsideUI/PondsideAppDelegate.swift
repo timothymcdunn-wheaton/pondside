@@ -45,7 +45,7 @@ final class PondsideAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemVali
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationWillTerminate(_ notification: Notification) {
-        controllers.forEach { $0.score.flushPendingSave() }
+        controllers.forEach { $0.score.flushPendingSaves() }
     }
 
     func windowDidClose(_ controller: DocumentWindowController) {
@@ -56,7 +56,7 @@ final class PondsideAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemVali
 
     func open(_ url: URL) {
         let url = url.standardizedFileURL
-        if let existing = controllers.first(where: { $0.score.url == url }) {
+        if let existing = controllers.first(where: { $0.score.root.matches(path: url.path) }) {
             existing.showWindow(nil)
             return
         }
@@ -185,6 +185,8 @@ final class PondsideAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemVali
         ])
         submenu("View", [
             item("Switch Pane", #selector(DocumentWindowController.switchPane(_:)), "j"),
+            item("Next File", #selector(DocumentWindowController.nextFile(_:)), "]", [.command, .shift]),
+            item("Previous File", #selector(DocumentWindowController.previousFile(_:)), "[", [.command, .shift]),
             .separator(),
             item("Zoom In", #selector(DocumentWindowController.zoomIn(_:)), "="),
             item("Zoom Out", #selector(DocumentWindowController.zoomOut(_:)), "-"),

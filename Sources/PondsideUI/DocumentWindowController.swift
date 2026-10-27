@@ -19,7 +19,10 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     /// Set while the score drives the editor, so the editor's selection
     /// callback does not scroll the score the user is looking at.
     private var scoreIsDriving = false
-    private var pendingConflict: String?
+    private var pendingConflict: (file: SourceFile, disk: String)?
+    /// The file shown in the source pane; score edits apply to it.
+    private(set) var activeFile: SourceFile
+    private let fileMenu = NSPopUpButton(frame: .zero, pullsDown: false)
 
     var lightsOut: Bool {
         get { canvas.lightsOut }
@@ -28,6 +31,8 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
 
     init(document: ScoreDocument) {
         self.score = document
+        // Start where the music is: the root, unless it only includes parts.
+        self.activeFile = document.root.hasNotes ? document.root : (document.files.first { $0.hasNotes } ?? document.root)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1440, height: 900),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: false)
@@ -42,7 +47,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
         window.delegate = self
         buildLayout()
         wire()
-        editor.load(score.text)
+        showFile(activeFile)
         score.delegate = self
         score.open()
         updateStatus()
@@ -66,9 +71,39 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
         canvasScroll.allowsMagnification = false
         canvasScroll.contentView.postsBoundsChangedNotifications = true
 
+        // The source pane: a one-line file bar over the editor.
+        let editorPane = NSView()
+        let fileBar = NSView()
+        fileBar.wantsLayer = true
+        fileBar.layer?.backgroundColor = Theme.chrome.cgColor
+        fileMenu.translatesAutoresizingMaskIntoConstraints = false
+        fileMenu.isBordered = false
+        fileMenu.font = Theme.secondaryFont
+        fileMenu.target = self
+        fileMenu.action = #selector(fileMenuChanged(_:))
+        fileMenu.toolTip = "The file shown in the source pane — ⌘⇧] next, ⌘⇧[ previous. Clicking a note in the score opens its file."
+        for v in [fileBar, editor] as [NSView] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+            editorPane.addSubview(v)
+        }
+        fileBar.addSubview(fileMenu)
+        NSLayoutConstraint.activate([
+            fileBar.topAnchor.constraint(equalTo: editorPane.topAnchor),
+            fileBar.leadingAnchor.constraint(equalTo: editorPane.leadingAnchor),
+            fileBar.trailingAnchor.constraint(equalTo: editorPane.trailingAnchor),
+            fileBar.heightAnchor.constraint(equalToConstant: 28),
+            fileMenu.leadingAnchor.constraint(equalTo: fileBar.leadingAnchor, constant: 10),
+            fileMenu.centerYAnchor.constraint(equalTo: fileBar.centerYAnchor),
+            fileMenu.trailingAnchor.constraint(lessThanOrEqualTo: fileBar.trailingAnchor, constant: -10),
+            editor.topAnchor.constraint(equalTo: fileBar.bottomAnchor),
+            editor.leadingAnchor.constraint(equalTo: editorPane.leadingAnchor),
+            editor.trailingAnchor.constraint(equalTo: editorPane.trailingAnchor),
+            editor.bottomAnchor.constraint(equalTo: editorPane.bottomAnchor),
+        ])
+
         split.isVertical = true
         split.dividerStyle = .thin
-        split.addArrangedSubview(editor)
+        split.addArrangedSubview(editorPane)
         split.addArrangedSubview(canvasScroll)
         split.setHoldingPriority(.defaultLow + 1, forSubviewAt: 0)
         split.translatesAutoresizingMaskIntoConstraints = false
@@ -88,7 +123,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
             statusBar.trailingAnchor.constraint(equalTo: content.trailingAnchor),
             statusBar.bottomAnchor.constraint(equalTo: content.bottomAnchor),
             statusBar.heightAnchor.constraint(equalToConstant: 26),
-            editor.widthAnchor.constraint(greaterThanOrEqualToConstant: 280),
+            editorPane.widthAnchor.constraint(greaterThanOrEqualToConstant: 280),
             canvasScroll.widthAnchor.constraint(greaterThanOrEqualToConstant: 320),
         ])
         content.layoutSubtreeIfNeeded()
@@ -100,7 +135,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
         canvas.onZoomChange = { [weak self] _ in self?.updateStatus() }
         editor.onUserEdit = { [weak self] text in
             guard let self else { return }
-            self.score.userEdited(text)
+            self.score.userEdited(self.activeFile, text: text)
             self.rebuildEngravingMap()
         }
         editor.onSelectionChange = { [weak self] range in
@@ -116,7 +151,49 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     // derived from it, through the engraving map while the canvas still
     // shows the previous engraving.
 
-    private var tree: SyntaxTree { score.tree }
+    private var tree: SyntaxTree { activeFile.tree }
+
+    // MARK: Files
+
+    /// Shows `file` in the source pane. Selection, highlight and score
+    /// edits all follow the visible file.
+    private func showFile(_ file: SourceFile) {
+        activeFile = file
+        editor.show(file.url, text: file.text, undoManager: file.undoManager)
+        rebuildFileMenu()
+        rebuildEngravingMap()
+        showDiagnostics()
+        refreshHighlight(reveal: false)
+        updateStatus()
+    }
+
+    private func rebuildFileMenu() {
+        fileMenu.removeAllItems()
+        for (i, f) in score.files.enumerated() {
+            var title = f.displayName
+            if i == 0 { title += "  (root)" }
+            if !f.hasNotes { title += "  — no notes" }
+            fileMenu.addItem(withTitle: title)
+            fileMenu.lastItem?.representedObject = f.url
+        }
+        if let i = score.files.firstIndex(where: { $0 === activeFile }) { fileMenu.selectItem(at: i) }
+    }
+
+    @objc private func fileMenuChanged(_ sender: NSPopUpButton) {
+        let i = sender.indexOfSelectedItem
+        guard score.files.indices.contains(i) else { return }
+        showFile(score.files[i])
+    }
+
+    @objc func nextFile(_ sender: Any?) { stepFile(1) }
+    @objc func previousFile(_ sender: Any?) { stepFile(-1) }
+
+    private func stepFile(_ step: Int) {
+        let files = score.files
+        guard let i = files.firstIndex(where: { $0 === activeFile }), files.count > 1 else { return }
+        showFile(files[(i + step + files.count) % files.count])
+        statusBar.flash("Editing \(activeFile.displayName)")
+    }
 
     /// The selection as UTF-8 offsets into the current text.
     private func selectionUTF8() -> Range<Int> {
@@ -165,10 +242,14 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     private var linkOffsets: [(offset: Int, position: SourcePosition)] = []
 
     private func rebuildEngravingMap() {
-        guard let engraved = score.engravedText else { engraving = nil; return }
+        guard let engraved = activeFile.engravedText else {
+            engraving = nil
+            linkOffsets = []
+            return
+        }
         let map = EngravingMap(engraved: engraved, current: editor.text)
         engraving = map
-        linkOffsets = score.linkedPositions
+        linkOffsets = activeFile.linkedPositions
             .compactMap { p -> (offset: Int, position: SourcePosition)? in
                 map.engravedOffset(of: p).map { (offset: $0, position: p) }
             }
@@ -192,7 +273,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
             for l in linkOffsets where l.offset >= a && l.offset < max(b, a + 1) { positions.insert(l.position) }
         }
         hasSelection = !positions.isEmpty
-        canvas.highlight(positions, path: score.url.path, reveal: reveal)
+        canvas.highlight(positions, path: activeFile.url.path, reveal: reveal)
         updateHints()
     }
 
@@ -358,12 +439,16 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
         if let declared = score.declaredVersion, let v = score.installation?.version, declared != v {
             note = "Score declares \(declared); compiling with \(v)"
         }
+        if let f = score.unlinkedFiles.first {
+            // Never fail silently: say which music can't be clicked, and why.
+            note = "\(f.displayName) has notes but no point-and-click links"
+        }
         statusBar.set(status: score.status, detail: firstErrorText(), zoom: canvas.zoom, toolchain: lily, note: note)
         updateHints()
     }
 
     private func firstErrorText() -> String? {
-        guard let d = score.diagnostics.first(where: { $0.severity == .error || $0.severity == .fatal }) else { return nil }
+        guard let d = score.files.lazy.flatMap({ $0.diagnostics }).first(where: { $0.severity == .error || $0.severity == .fatal }) else { return nil }
         if let line = d.line { return "line \(line): \(d.message)" }
         return d.message
     }
@@ -381,10 +466,10 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
 
     private func showDiagnostics() {
         let text = editor.text
-        let source = SourceText(score.compiledText ?? text)
-        let map = EngravingMap(engraved: score.compiledText ?? text, current: text)
+        let source = SourceText(activeFile.compiledText ?? text)
+        let map = EngravingMap(engraved: activeFile.compiledText ?? text, current: text)
         let current = SourceText(text)
-        let ranges: [(NSRange, NSColor)] = score.diagnostics.compactMap { d in
+        let ranges: [(NSRange, NSColor)] = activeFile.diagnostics.compactMap { d in
             guard let p = d.position(in: source), let i = source.index(of: p) else { return nil }
             let loc = map.currentOffset(forEngraved: source.utf16Offset(of: i))
             let start = current.index(utf16Offset: loc)
@@ -448,6 +533,11 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     func windowDidBecomeKey(_ notification: Notification) {
         score.revalidate()
     }
+
+    /// ⌘Z from either pane undoes the visible file's edits, score and text alike.
+    func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? {
+        activeFile.undoManager
+    }
 }
 
 extension DocumentWindowController: ScoreCanvasDelegate {
@@ -456,9 +546,13 @@ extension DocumentWindowController: ScoreCanvasDelegate {
             perform(.clearSelection)
             return
         }
-        guard PathMatching.same(link.path, score.url.path) else {
-            statusBar.flash("That object comes from \((link.path as NSString).lastPathComponent):\(link.line)")
+        guard let file = score.file(for: link.path) else {
+            statusBar.flash("That object comes from \((link.path as NSString).lastPathComponent), outside this score's files")
             return
+        }
+        if file !== activeFile {
+            showFile(file)
+            statusBar.flash("Editing \(file.displayName)")
         }
         guard let offset = currentOffset(of: link) else { return }
         // A chord member selects just that note, so ↑↓ move it alone.
@@ -477,8 +571,21 @@ extension DocumentWindowController: ScoreCanvasDelegate {
         setSelection(utf8: range)
     }
 
+    func canvasClickedUnlinkedMusic(_ canvas: ScoreCanvasView) {
+        // DESIGN.md M2.1 B: explain, don't silently deselect.
+        statusBar.flash("That object has no source link — it may come from Scheme, a music function, or LilyPond itself")
+    }
+
     func canvas(_ canvas: ScoreCanvasView, didSelect links: [PointAndClickLocation]) {
-        let offsets = links.filter { PathMatching.same($0.path, score.url.path) }.compactMap { currentOffset(of: $0) }
+        // A rectangle edits one file: the one most of its links come from.
+        var counts: [ObjectIdentifier: (SourceFile, Int)] = [:]
+        for l in links {
+            guard let f = score.file(for: l.path) else { continue }
+            counts[ObjectIdentifier(f), default: (f, 0)].1 += 1
+        }
+        guard let target = counts.values.max(by: { $0.1 < $1.1 })?.0 else { return }
+        if target !== activeFile { showFile(target) }
+        let offsets = links.filter { target.matches(path: $0.path) }.compactMap { currentOffset(of: $0) }
         let events = Set(offsets.compactMap { tree.eventIndex(at: $0) })
         guard !events.isEmpty else { return }
         // A rectangle selects the contiguous source span it covers.
@@ -491,33 +598,41 @@ extension DocumentWindowController: ScoreCanvasDelegate {
 }
 
 extension DocumentWindowController: ScoreDocumentDelegate {
-    func documentDidReloadFromDisk(_ document: ScoreDocument, text: String) {
-        editor.mergeExternal(text)
+    func document(_ document: ScoreDocument, didReloadFromDisk file: SourceFile) {
+        editor.mergeExternal(file.text, into: file.url)
         rebuildEngravingMap()
         refreshHighlight(reveal: false)
-        statusBar.flash("Reloaded — the file changed on disk")
+        statusBar.flash("Reloaded \(file.displayName) — it changed on disk")
     }
 
-    func documentHasConflict(_ document: ScoreDocument, diskText: String) {
+    func document(_ document: ScoreDocument, hasConflictIn file: SourceFile, diskText: String) {
         guard let window, pendingConflict == nil else {
-            pendingConflict = diskText
+            pendingConflict = (file, diskText)
             return
         }
-        pendingConflict = diskText
+        pendingConflict = (file, diskText)
         let alert = NSAlert()
-        alert.messageText = "\(score.url.lastPathComponent) changed on disk while you were typing"
+        alert.messageText = "\(file.displayName) changed on disk while you were typing"
         alert.informativeText = "Another program edited the file. Whichever version you don't keep is saved to ~/Library/Application Support/Pondside/Recovery, so nothing is lost."
         alert.addButton(withTitle: "Use the File on Disk")
         alert.addButton(withTitle: "Keep My Edits")
         alert.beginSheetModal(for: window) { [weak self] response in
-            guard let self, let disk = self.pendingConflict else { return }
+            guard let self, let pending = self.pendingConflict else { return }
             self.pendingConflict = nil
-            self.score.resolveConflict(keepMine: response == .alertSecondButtonReturn, diskText: disk)
+            self.score.resolveConflict(in: pending.file, keepMine: response == .alertSecondButtonReturn, diskText: pending.disk)
         }
     }
 
     func documentStatusDidChange(_ document: ScoreDocument) {
         updateStatus()
+    }
+
+    func documentFilesDidChange(_ document: ScoreDocument) {
+        if !document.files.contains(where: { $0 === activeFile }) {
+            showFile(document.root)
+        } else {
+            rebuildFileMenu()
+        }
     }
 
     func documentDidEngrave(_ document: ScoreDocument) {

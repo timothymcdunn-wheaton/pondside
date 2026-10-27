@@ -44,6 +44,9 @@ struct Parser {
     private(set) var notes: [NoteInfo] = []
     private(set) var events: [MusicEvent] = []
     private(set) var issues: [Range<Int>] = []
+    private(set) var includes: [IncludeDirective] = []
+    private let includedLanguage: (String) -> PitchLanguage?
+    var currentLanguage: PitchLanguage { language }
 
     // Lexical music state.
     private var language: PitchLanguage = .nederlands
@@ -89,9 +92,12 @@ struct Parser {
         "removeWithTag", "once", "temporary", "unfoldRepeats", "volta", "relative", "fixed", "absolute",
     ]
 
-    init(_ bytes: [UInt8]) {
+    init(_ bytes: [UInt8], language: PitchLanguage = .nederlands,
+         includedLanguage: @escaping (String) -> PitchLanguage? = { _ in nil }) {
         b = bytes
         lexer = Lexer(bytes)
+        self.language = language
+        self.includedLanguage = includedLanguage
     }
 
     // MARK: - Helpers
@@ -313,7 +319,8 @@ struct Parser {
             st.expectLanguage = false
         }
         if st.expectInclude {
-            if let l = PitchLanguage(includeFile: content) { language = l }
+            includes.append(IncludeDirective(path: content, range: t.start..<t.end, language: language))
+            if let l = includedLanguage(content) ?? PitchLanguage(includeFile: content) { language = l }
             st.expectInclude = false
         }
         st.expectIdentifier = false

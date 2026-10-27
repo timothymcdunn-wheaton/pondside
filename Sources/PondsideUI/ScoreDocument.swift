@@ -13,10 +13,12 @@ enum CompileStatus: Equatable {
 
 @MainActor
 protocol ScoreDocumentDelegate: AnyObject {
-    func documentDidReloadFromDisk(_ document: ScoreDocument, text: String)
-    func documentHasConflict(_ document: ScoreDocument, diskText: String)
+    func document(_ document: ScoreDocument, didReloadFromDisk file: SourceFile)
+    func document(_ document: ScoreDocument, hasConflictIn file: SourceFile, diskText: String)
     func documentStatusDidChange(_ document: ScoreDocument)
     func documentDidEngrave(_ document: ScoreDocument)
+    /// Files joined or left the include graph.
+    func documentFilesDidChange(_ document: ScoreDocument)
 }
 
 /// Detected LilyPond installs, probed once per launch.
@@ -39,60 +41,101 @@ final class WeakRef<T: AnyObject>: @unchecked Sendable {
     init(_ value: T) { self.value = value }
 }
 
-/// One open score: the `.ly` file on disk is the document.
+/// One file of a score: the root or anything it `\include`s.
 ///
-/// Edits are autosaved after 250 ms of idle and engraved right after, so
-/// the file — not this object — always holds the work. External writes are
-/// detected by content, merged into the editor, and re-engraved.
+/// The file on disk is the truth. Edits autosave after 250 ms of idle;
+/// external writes are recognised by content and merged.
+@MainActor
+final class SourceFile {
+    /// Canonical location (symlinks resolved).
+    let url: URL
+    fileprivate(set) var text: String
+    /// Parsed in context (the language in effect where it is included).
+    fileprivate(set) var tree: SyntaxTree
+    fileprivate(set) var entryLanguage: PitchLanguage = .nederlands
+    /// The text the current pages were engraved from (their links refer to it).
+    fileprivate(set) var engravedText: String?
+    /// The text the current diagnostics refer to.
+    fileprivate(set) var compiledText: String?
+    fileprivate(set) var diagnostics: [Diagnostic] = []
+    /// Source positions in this file that produced graphics, in order.
+    fileprivate(set) var linkedPositions: [SourcePosition] = []
+    /// One undo stack per file, as in any text editor.
+    let undoManager = UndoManager()
+
+    fileprivate var sync = DiskSync()
+    fileprivate var watcher: FileWatcher?
+    fileprivate var saveTask: Task<Void, Never>?
+    fileprivate var pendingSnapshot: String?
+
+    var displayName: String { url.lastPathComponent }
+
+    /// Whether the file holds any music events with pitches.
+    var hasNotes: Bool { tree.notes.contains { $0.role == .event } }
+
+    fileprivate init(url: URL, text: String, tree: SyntaxTree) {
+        self.url = url
+        self.text = text
+        self.tree = tree
+        sync = DiskSync(lastSyncedHash: ContentHash(text))
+    }
+
+    func matches(path: String) -> Bool {
+        PathMatching.same(path, url.path)
+    }
+}
+
+/// An open score: the root `.ly` file and every file it includes.
+///
+/// The root is what LilyPond compiles. Any file in the include graph can be
+/// edited from the score; each keeps its own text, undo, autosave and
+/// watcher, and a change to any of them re-engraves the root.
 @MainActor
 final class ScoreDocument {
     let url: URL
-    private(set) var text: String
-    /// The parsed text, always in step with `text`.
-    private(set) var tree: SyntaxTree
-    /// The text the current pages were engraved from (their links refer to it).
-    private(set) var engravedText: String?
-    /// The text the current diagnostics refer to.
-    private(set) var compiledText: String?
+    private(set) var files: [SourceFile]
     weak var delegate: ScoreDocumentDelegate?
 
     private(set) var status: CompileStatus = .idle
     private(set) var pages: [EngravedPage] = []
-    private(set) var diagnostics: [Diagnostic] = []
     private(set) var installation: LilyPondInstallation?
     private(set) var declaredVersion: LilyPondVersion?
-    /// Every source position that produced a graphic, in source order.
-    private(set) var linkedPositions: [SourcePosition] = []
+    /// Files that contribute notes but produced no point-and-click links.
+    private(set) var unlinkedFiles: [SourceFile] = []
 
-    private var sync = DiskSync()
-    private var watcher: FileWatcher?
-    private var saveTask: Task<Void, Never>?
     private var compileRunning = false
     private var compilePending = false
     private let workDirectory: URL
+    private var opened = false
 
     static let autosaveDelay: Duration = .milliseconds(250)
 
+    var root: SourceFile { files[0] }
+
     init(url: URL) throws {
-        let url = url.standardizedFileURL
-        let contents = String(decoding: try Data(contentsOf: url), as: UTF8.self)
-        self.url = url
-        text = contents
-        tree = SyntaxTree(contents)
+        let canonical = SourceGraph.canonical(url)
+        // Fail early, as before, if the root can't be read.
+        _ = try Data(contentsOf: canonical)
+        self.url = canonical
+        let graph = SourceGraph.load(root: canonical)
+        files = graph.files.map { f in
+            let file = SourceFile(url: f.url, text: f.text, tree: f.tree)
+            file.entryLanguage = f.entryLanguage
+            return file
+        }
         workDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Pondside", isDirectory: true)
-            .appendingPathComponent(ContentHash(url.path).description, isDirectory: true)
-        sync = DiskSync(lastSyncedHash: ContentHash(contents))
-        declaredVersion = LilyPondVersion.declared(in: contents)
+            .appendingPathComponent(ContentHash(canonical.path).description, isDirectory: true)
+        declaredVersion = LilyPondVersion.declared(in: files[0].text)
+    }
+
+    func file(for path: String) -> SourceFile? {
+        files.first { $0.matches(path: path) }
     }
 
     func open() {
-        let ref = WeakRef(self)
-        let w = FileWatcher(url: url) { change in
-            Task { @MainActor in ref.value?.diskChanged(change.text) }
-        }
-        w.start()
-        watcher = w
+        opened = true
+        for f in files { startWatching(f) }
         Task {
             let installs = await ToolchainStore.shared.installs()
             installation = ToolchainDetector.select(from: installs, for: declaredVersion)
@@ -101,102 +144,152 @@ final class ScoreDocument {
     }
 
     func close() {
-        flushPendingSave()
-        watcher?.stop()
-        watcher = nil
+        flushPendingSaves()
+        for f in files {
+            f.watcher?.stop()
+            f.watcher = nil
+        }
         try? FileManager.default.removeItem(at: workDirectory)
     }
 
     /// Re-checks the disk immediately (e.g. when the app becomes active).
     func revalidate() {
-        watcher?.pollNow()
+        files.forEach { $0.watcher?.pollNow() }
+    }
+
+    private func startWatching(_ file: SourceFile) {
+        guard opened, file.watcher == nil else { return }
+        let ref = WeakRef(self)
+        let fileRef = WeakRef(file)
+        let w = FileWatcher(url: file.url) { change in
+            Task { @MainActor in
+                guard let doc = ref.value, let f = fileRef.value else { return }
+                doc.diskChanged(f, change.text)
+            }
+        }
+        w.start()
+        file.watcher = w
+    }
+
+    // MARK: The include graph
+
+    /// Re-reads the graph using the in-memory texts, re-parsing every file
+    /// in context and picking up includes that were added or removed.
+    private func refreshGraph() {
+        var overrides: [URL: String] = [:]
+        for f in files { overrides[f.url] = f.text }
+        let graph = SourceGraph.load(root: url, overrides: overrides)
+        var byURL: [URL: SourceFile] = [:]
+        for f in files { byURL[f.url] = f }
+        var next: [SourceFile] = []
+        var changed = false
+        for g in graph.files {
+            if let f = byURL[g.url] {
+                f.tree = g.tree
+                f.entryLanguage = g.entryLanguage
+                next.append(f)
+            } else {
+                let f = SourceFile(url: g.url, text: g.text, tree: g.tree)
+                f.entryLanguage = g.entryLanguage
+                next.append(f)
+                startWatching(f)
+                changed = true
+            }
+        }
+        for f in files where !next.contains(where: { $0 === f }) {
+            f.watcher?.stop()
+            f.watcher = nil
+            changed = true
+        }
+        files = next
+        declaredVersion = LilyPondVersion.declared(in: root.text)
+        if changed { delegate?.documentFilesDidChange(self) }
     }
 
     // MARK: Editing and saving
 
-    func userEdited(_ newText: String) {
-        text = newText
-        tree = SyntaxTree(newText)
-        saveTask?.cancel()
-        saveTask = Task { [weak self] in
+    func userEdited(_ file: SourceFile, text newText: String) {
+        file.text = newText
+        refreshGraph()
+        file.saveTask?.cancel()
+        file.saveTask = Task { [weak self, weak file] in
             try? await Task.sleep(for: ScoreDocument.autosaveDelay)
-            guard !Task.isCancelled, let self else { return }
-            self.save()
+            guard !Task.isCancelled, let self, let file else { return }
+            self.save(file)
             self.engrave()
         }
     }
 
-    func flushPendingSave() {
-        guard saveTask != nil else { return }
-        saveTask?.cancel()
-        saveTask = nil
-        save()
+    func flushPendingSaves() {
+        for f in files where f.saveTask != nil {
+            f.saveTask?.cancel()
+            f.saveTask = nil
+            save(f)
+        }
     }
 
-    private func save() {
-        saveTask = nil
-        guard ContentHash(text) != sync.lastSyncedHash else { return }
+    private func save(_ file: SourceFile) {
+        file.saveTask = nil
+        guard ContentHash(file.text) != file.sync.lastSyncedHash else { return }
         do {
-            watcher?.noteOwnWrite(text)
-            try Data(text.utf8).write(to: url, options: .atomic)
-            sync.noteSynced(text)
-            declaredVersion = LilyPondVersion.declared(in: text)
+            file.watcher?.noteOwnWrite(file.text)
+            try Data(file.text.utf8).write(to: file.url, options: .atomic)
+            file.sync.noteSynced(file.text)
         } catch {
-            setStatus(.failed("Could not save: \(error.localizedDescription)"))
+            setStatus(.failed("Could not save \(file.displayName): \(error.localizedDescription)"))
         }
     }
 
     /// Resolve a conflict in favour of the buffer or the disk. The losing
     /// side is kept in a recovery file — never discarded.
-    func resolveConflict(keepMine: Bool, diskText: String) {
+    func resolveConflict(in file: SourceFile, keepMine: Bool, diskText: String) {
         if keepMine {
-            stashRecovery(diskText, label: "disk")
-            sync.noteSynced(diskText)
-            saveTask?.cancel()
-            save()
+            stashRecovery(diskText, for: file, label: "disk")
+            file.sync.noteSynced(diskText)
+            file.saveTask?.cancel()
+            save(file)
         } else {
-            stashRecovery(text, label: "unsaved")
-            adopt(diskText)
-            delegate?.documentDidReloadFromDisk(self, text: diskText)
+            stashRecovery(file.text, for: file, label: "unsaved")
+            adopt(diskText, in: file)
+            delegate?.document(self, didReloadFromDisk: file)
         }
         engrave()
     }
 
-    private func diskChanged(_ diskText: String) {
-        switch sync.classify(diskText: diskText, bufferText: text) {
+    private func diskChanged(_ file: SourceFile, _ diskText: String) {
+        switch file.sync.classify(diskText: diskText, bufferText: file.text) {
         case .ignore:
-            sync.noteSynced(diskText)
+            file.sync.noteSynced(diskText)
         case .reload:
-            adopt(diskText)
-            delegate?.documentDidReloadFromDisk(self, text: diskText)
+            adopt(diskText, in: file)
+            delegate?.document(self, didReloadFromDisk: file)
             engrave()
         case .conflict:
-            delegate?.documentHasConflict(self, diskText: diskText)
+            delegate?.document(self, hasConflictIn: file, diskText: diskText)
         }
     }
 
-    private func adopt(_ diskText: String) {
-        saveTask?.cancel()
-        saveTask = nil
-        text = diskText
-        tree = SyntaxTree(diskText)
-        sync.noteSynced(diskText)
-        declaredVersion = LilyPondVersion.declared(in: diskText)
+    private func adopt(_ diskText: String, in file: SourceFile) {
+        file.saveTask?.cancel()
+        file.saveTask = nil
+        file.text = diskText
+        file.sync.noteSynced(diskText)
+        refreshGraph()
     }
 
-    private func stashRecovery(_ contents: String, label: String) {
+    private func stashRecovery(_ contents: String, for file: SourceFile, label: String) {
         let fm = FileManager.default
         guard let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
         let dir = support.appendingPathComponent("Pondside/Recovery", isDirectory: true)
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
         let stamp = Int(Date().timeIntervalSince1970)
-        let name = "\(url.deletingPathExtension().lastPathComponent)-\(label)-\(stamp).ly"
+        let name = "\(file.url.deletingPathExtension().lastPathComponent)-\(label)-\(stamp).\(file.url.pathExtension)"
         try? Data(contents.utf8).write(to: dir.appendingPathComponent(name), options: .atomic)
     }
 
     // MARK: Engraving
 
-    /// Compiles the file on disk. Compiles never overlap; requests that
+    /// Compiles the root on disk. Compiles never overlap; requests that
     /// arrive mid-compile collapse into one follow-up compile.
     func engrave() {
         guard let installation else { return }
@@ -210,11 +303,10 @@ final class ScoreDocument {
         let source = url
         // Exactly what LilyPond will read, so links and diagnostics can be
         // mapped back onto text that has moved on since.
-        let snapshot = (try? String(contentsOf: url, encoding: .utf8)) ?? text
+        for f in files { f.pendingSnapshot = (try? String(contentsOf: f.url, encoding: .utf8)) ?? f.text }
         let out = workDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         Task {
-            var outcome = await Self.compile(engraver, source: source, out: out)
-            outcome.snapshot = snapshot
+            let outcome = await Self.compile(engraver, source: source, out: out)
             self.finish(outcome)
         }
     }
@@ -223,7 +315,6 @@ final class ScoreDocument {
         var result: EngraveResult?
         var pages: [EngravedPage]
         var error: String?
-        var snapshot = ""
     }
 
     /// Runs off the main actor: the compile and the SVG parsing.
@@ -241,17 +332,19 @@ final class ScoreDocument {
     private func finish(_ outcome: Outcome) {
         compileRunning = false
         if let result = outcome.result {
-            compiledText = outcome.snapshot
-            diagnostics = result.diagnostics.filter { d in
-                guard let file = d.file else { return true }
-                return PathMatching.same(file, url.path) || file == url.lastPathComponent
+            for f in files {
+                f.compiledText = f.pendingSnapshot
+                f.diagnostics = result.diagnostics.filter { d in
+                    guard let file = d.file else { return f === root }
+                    return f.matches(path: file) || (file == f.displayName && !file.contains("/"))
+                }
             }
             // Keep showing the last good engraving while the source has errors,
             // so the score never blanks out mid-thought.
             if !outcome.pages.isEmpty {
                 pages = outcome.pages
-                engravedText = outcome.snapshot
-                linkedPositions = Self.positions(in: pages)
+                distributeLinks()
+                for f in files { f.engravedText = f.pendingSnapshot }
             }
             let errorCount = result.errors.count
             if errorCount > 0 {
@@ -272,12 +365,24 @@ final class ScoreDocument {
         }
     }
 
-    private static func positions(in pages: [EngravedPage]) -> [SourcePosition] {
-        var set = Set<SourcePosition>()
+    /// Splits the pages' links by file, and notes files whose music produced
+    /// no links at all (DESIGN.md M2.1 B: never fail silently).
+    private func distributeLinks() {
+        var byPath: [String: SourceFile?] = [:]
+        var positions: [ObjectIdentifier: Set<SourcePosition>] = [:]
         for page in pages {
-            for g in page.graphics { if let l = g.link { set.insert(l.position) } }
+            for g in page.graphics {
+                guard let link = g.link else { continue }
+                let f: SourceFile?
+                if let cached = byPath[link.path] { f = cached } else {
+                    f = file(for: link.path)
+                    byPath[link.path] = f
+                }
+                if let f { positions[ObjectIdentifier(f), default: []].insert(link.position) }
+            }
         }
-        return set.sorted()
+        for f in files { f.linkedPositions = (positions[ObjectIdentifier(f)] ?? []).sorted() }
+        unlinkedFiles = files.filter { $0.hasNotes && $0.linkedPositions.isEmpty }
     }
 
     private func setStatus(_ s: CompileStatus) {
@@ -290,7 +395,7 @@ final class ScoreDocument {
     /// Engraves a PDF for distribution — point-and-click off, leak-checked —
     /// and moves it to `destination`.
     func exportPDF(to destination: URL) async throws {
-        flushPendingSave()
+        flushPendingSaves()
         guard let installation else { throw CocoaError(.featureUnsupported) }
         let engraver = LilyPondEngraver(installation: installation)
         let out = workDirectory.appendingPathComponent("export-\(UUID().uuidString)", isDirectory: true)

@@ -49,11 +49,13 @@ public struct LilyPondEngraver: Sendable {
 
     /// The command-line arguments for a compile. Public so tests can pin the
     /// point-and-click policy without running LilyPond.
-    public static func arguments(for purpose: EngravePurpose, source: URL, outputBase: URL) -> [String] {
+    public static func arguments(for purpose: EngravePurpose, source: URL, outputBase: URL,
+                                 sessionSettings: URL? = nil) -> [String] {
         var args: [String] = []
         switch purpose {
         case .canvas:
             args += ["-dbackend=svg", "-dpoint-and-click"]
+            if let sessionSettings { args.append("-dinclude-settings=\(sessionSettings.path)") }
         case .export(let format):
             args += ["-dno-point-and-click"]
             switch format {
@@ -71,11 +73,17 @@ public struct LilyPondEngraver: Sendable {
     public func engrave(_ source: URL, purpose: EngravePurpose, outputDirectory: URL) async throws -> EngraveResult {
         try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
         let base = outputDirectory.appendingPathComponent(source.deletingPathExtension().lastPathComponent)
+        var settings: URL?
+        if case .canvas = purpose {
+            let url = outputDirectory.appendingPathComponent("pondside-session.ily")
+            try Data(SessionSettings.canvas.utf8).write(to: url)
+            settings = url
+        }
         let clock = ContinuousClock()
         let start = clock.now
         let output = try await ProcessRunner.run(
             installation.executable,
-            Self.arguments(for: purpose, source: source, outputBase: base),
+            Self.arguments(for: purpose, source: source, outputBase: base, sessionSettings: settings),
             currentDirectory: source.deletingLastPathComponent().path)
         let duration = clock.now - start
         let log = output.stderrString + output.stdoutString
@@ -155,4 +163,24 @@ public enum ExportSafety {
         }
         return false
     }
+}
+
+/// Scheme injected into interactive canvas compiles with `-dinclude-settings`.
+/// It never touches the user's files, and it is never used for export.
+public enum SessionSettings {
+    /// Keeps point-and-click on even when a score (or a file it includes)
+    /// turns it off. musicxml2ly writes `\pointAndClickOff` at the top of
+    /// every file, and `\pointAndClickTypes` restricts which grobs link.
+    /// Both go through `ly:set-option`, so wrapping it catches them and any
+    /// raw `#(ly:set-option 'point-and-click #f)`: only `#t` gets through.
+    /// Verified with LilyPond 2.24.3 (DESIGN.md §7, M2.1).
+    public static let canvas = """
+    #(let ((pondside-original-set-option ly:set-option))
+       (set! ly:set-option
+             (lambda (sym . rest)
+               (if (and (eq? sym 'point-and-click) (pair? rest) (not (eq? (car rest) #t)))
+                   #f
+                   (apply pondside-original-set-option sym rest)))))
+
+    """
 }

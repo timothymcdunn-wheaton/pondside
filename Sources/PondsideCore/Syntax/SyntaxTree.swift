@@ -101,6 +101,15 @@ public struct MusicEvent: Sendable, Hashable {
     public var acceptsNoteEntry: Bool { lexMode == .notes && kind != .lyric && kind != .drum }
 }
 
+/// An `\include "…"` with the note-name language in effect where it appears.
+public struct IncludeDirective: Sendable, Hashable {
+    /// The string as written.
+    public var path: String
+    /// The string token's range (quotes included).
+    public var range: Range<Int>
+    public var language: PitchLanguage
+}
+
 /// A parsed LilyPond document: the lossless tree plus the music it encodes.
 public struct SyntaxTree: Sendable {
     public let text: String
@@ -110,10 +119,20 @@ public struct SyntaxTree: Sendable {
     public let events: [MusicEvent]
     /// Places the parser had to recover: stray closers, unterminated blocks.
     public let issues: [Range<Int>]
+    public let includes: [IncludeDirective]
+    /// The note-name language in effect at the end of the file.
+    public let finalLanguage: PitchLanguage
 
-    public init(_ text: String) {
+    /// Parses `text`.
+    /// - Parameters:
+    ///   - language: the language in effect where this file is included.
+    ///   - includedLanguage: for an `\include` string, the language the
+    ///     included file leaves in effect (so `defs.ily` can switch the rest
+    ///     of the score to English). nil means "unchanged".
+    public init(_ text: String, language: PitchLanguage = .nederlands,
+                includedLanguage: @escaping (String) -> PitchLanguage? = { _ in nil }) {
         let bytes = Array(text.utf8)
-        var parser = Parser(bytes)
+        var parser = Parser(bytes, language: language, includedLanguage: includedLanguage)
         let root = parser.parseDocument()
         self.text = text
         self.bytes = bytes
@@ -121,6 +140,8 @@ public struct SyntaxTree: Sendable {
         self.notes = parser.notes
         self.events = parser.events
         self.issues = parser.issues
+        self.includes = parser.includes
+        self.finalLanguage = parser.currentLanguage
     }
 
     public func string(_ range: Range<Int>) -> String {

@@ -185,3 +185,24 @@ final class SemanticsTests: XCTestCase {
                        ["0:2:1", "2:-2:1", "6:-2:1", "1:1:2"])
     }
 }
+
+final class IncludeTests: XCTestCase {
+    func testIncludesRecordTheLanguageInEffect() {
+        let tree = SyntaxTree("\\include \"a.ily\"\n\\language \"english\"\n\\include \"b.ily\"\n{ cs }")
+        XCTAssertEqual(tree.includes.map(\.path), ["a.ily", "b.ily"])
+        XCTAssertEqual(tree.includes.map(\.language), [.nederlands, .english])
+        XCTAssertEqual(tree.finalLanguage, .english)
+    }
+
+    func testIncludedFilesCanChangeTheLanguage() {
+        // defs.ily switches to English; the music after the include follows.
+        let tree = SyntaxTree("\\include \"defs.ily\"\n{ cs4 fs }", includedLanguage: { $0 == "defs.ily" ? .english : nil })
+        XCTAssertEqual(pitches(tree.text) .count, 0, "parsed alone, cs and fs are not Dutch notes")
+        XCTAssertEqual(tree.notes.map(\.absolute.alteration), [2, 2])
+        XCTAssertEqual(tree.finalLanguage, .english)
+    }
+
+    func testEntryLanguage() {
+        XCTAssertEqual(SyntaxTree("{ bf4 }", language: .english).notes.map(\.absolute.alteration), [-2])
+    }
+}

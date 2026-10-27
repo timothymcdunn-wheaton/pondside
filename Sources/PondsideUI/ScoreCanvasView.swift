@@ -8,6 +8,8 @@ protocol ScoreCanvasDelegate: AnyObject {
     func canvas(_ canvas: ScoreCanvasView, didClick link: PointAndClickLocation?, extending: Bool)
     /// The user dragged a selection rectangle over these links.
     func canvas(_ canvas: ScoreCanvasView, didSelect links: [PointAndClickLocation])
+    /// The user clicked music that carries no point-and-click link.
+    func canvasClickedUnlinkedMusic(_ canvas: ScoreCanvasView)
     /// A key pressed while the score has focus. Return true if handled.
     func canvas(_ canvas: ScoreCanvasView, handleKey event: NSEvent) -> Bool
 }
@@ -148,7 +150,14 @@ final class ScoreCanvasView: NSView {
 
     fileprivate func pageView(_ v: PageView, clickedAt p: Point, event: NSEvent) {
         window?.makeFirstResponder(self)
-        let link = v.rendered?.page.hitTest(p, tolerance: 0.3 / max(zoom, 0.5))?.link
+        let tolerance = 0.3 / max(zoom, 0.5)
+        let link = v.rendered?.page.hitTest(p, tolerance: tolerance)?.link
+        if link == nil, let page = v.rendered?.page,
+           page.graphics.contains(where: { $0.bounds.insetBy(-tolerance).contains(p) && $0.bounds.width < page.viewBox.width * 0.5 }) {
+            // Something is there, but it can't lead back to the source.
+            delegate?.canvasClickedUnlinkedMusic(self)
+            return
+        }
         delegate?.canvas(self, didClick: link, extending: event.modifierFlags.contains(.shift))
     }
 
