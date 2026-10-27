@@ -23,7 +23,7 @@ var targets: [Target] = [
     .target(name: "PondsideBridge", dependencies: ["PondsideCore", "PondsideEngrave", "PondsideTiming", "PondsideLexicon"]),
     .executableTarget(name: "PondsideCLI", dependencies: ["PondsideCore", "PondsideEngrave", "PondsideBridge"]),
 
-    .testTarget(name: "PondsideCoreTests", dependencies: ["PondsideCore"]),
+    .testTarget(name: "PondsideCoreTests", dependencies: ["PondsideCore"], resources: [.copy("Fixtures")]),
     .testTarget(name: "PondsideEngraveTests", dependencies: ["PondsideEngrave"], resources: [.copy("Fixtures")]),
 ]
 

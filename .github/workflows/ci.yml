@@ -16,9 +16,20 @@ jobs:
         run: ./scripts/check-seam.sh
       - name: Install LilyPond (integration tests)
         run: apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq lilypond > /dev/null && lilypond --version | head -1
+      - name: Fetch LilyPond corpus (regression tests + snippets, v2.24.3)
+        run: |
+          apt-get install -y -qq curl > /dev/null
+          mkdir -p /tmp/corpus && cd /tmp/corpus
+          for p in input/regression Documentation/snippets; do
+            curl -sSfL "https://gitlab.com/lilypond/lilypond/-/archive/v2.24.3/lilypond-v2.24.3.tar.gz?path=$p" | tar xz
+          done
+          cp -r /usr/share/lilypond/*/ly /tmp/corpus/init-ly
+          find /tmp/corpus -name '*.ly' | wc -l
       - name: Build
         run: swift build --build-tests
       - name: Test
+        env:
+          PONDSIDE_CORPUS: /tmp/corpus
         run: swift test --skip-build
 
   macos:
