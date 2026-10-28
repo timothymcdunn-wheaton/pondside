@@ -56,6 +56,12 @@ public struct Graphic: Hashable, Sendable {
     public var bounds: Rect
     /// Source location, when the grob was compiled with point-and-click.
     public var link: PointAndClickLocation?
+
+    public init(content: Content, bounds: Rect, link: PointAndClickLocation? = nil) {
+        self.content = content
+        self.bounds = bounds
+        self.link = link
+    }
 }
 
 /// A page of engraved music, parsed from LilyPond's SVG output.
@@ -93,9 +99,10 @@ public struct EngravedPage: Sendable {
 
     /// The linked graphic under `point` (page coordinates). When several
     /// overlap, the smallest wins, so a notehead beats the slur over it.
-    public func hitTest(_ point: Point, tolerance: Double = 0.25) -> Graphic? {
+    public func hitTest(_ point: Point, tolerance: Double = 0.25,
+                        excluding removed: Set<Graphic> = []) -> Graphic? {
         var best: Graphic?
-        for g in graphics where g.link != nil {
+        for g in graphics where g.link != nil && !removed.contains(g) {
             guard g.bounds.insetBy(-tolerance).contains(point) else { continue }
             if best == nil || g.bounds.area < best!.bounds.area { best = g }
         }
@@ -103,8 +110,8 @@ public struct EngravedPage: Sendable {
     }
 
     /// Linked graphics whose bounds intersect `rect`.
-    public func linkedGraphics(in rect: Rect) -> [Graphic] {
-        graphics.filter { $0.link != nil && $0.bounds.intersects(rect) }
+    public func linkedGraphics(in rect: Rect, excluding removed: Set<Graphic> = []) -> [Graphic] {
+        graphics.filter { $0.link != nil && !removed.contains($0) && $0.bounds.intersects(rect) }
     }
 
     /// Graphics produced by the token at exactly this source position.

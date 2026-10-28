@@ -305,7 +305,7 @@ creative solutions.
    paths and text. Metal would mean writing a GPU path rasteriser with
    analytic antialiasing and glyph rendering, which is months of work.
    Core Graphics into Core Animation layers is already GPU-composited, and
-   with per-page layers plus cached system tiles it scrolls at display rate.
+   with per-page layers plus cached page bitmaps it scrolls at display rate.
    **(proposed)** CG/CA now. Revisit Metal only if profiling shows a
    bottleneck, which I don't expect.
 
@@ -770,13 +770,11 @@ the `(lily)` module's own procedures.
   first CI run gave 1502 ms cold and a median of 166 ms warm, 9× (GitHub
   Linux runner, LilyPond 2.24.3).
 
-**Still to do in M4:** the windowed preview compile of the edited
-`\score` (only where a file has several), content-addressed caching of
-rendered systems, and the provisional instant rendering of an edit
-before LilyPond answers. With a warm compile at a few hundred
-milliseconds on slow hardware, the windowed compile matters less than
-the brief assumed. Provisional rendering is what still separates
-"fast" from "instant".
+**Still to do in M4:** content-addressed caching of rendered pages and
+the windowed preview compile of the edited `\score` (only where a file
+has several). With a warm compile at a few hundred milliseconds on slow
+hardware, the windowed compile matters less than the brief assumed.
+Provisional rendering is what still separates "fast" from "instant".
 
 ### M8 (second part): the Cue Inspector and the mockup render
 
@@ -844,7 +842,7 @@ timing that the cue engine understands:
 | M2.1 multi-file scores | done |
 | Mouse entry | done; not yet tried by hand |
 | M3 interface | catalog, chords, palette, hints, ⌥ reveal, panes, terminal, keyboard audit: done; not yet tried by hand |
-| M4 speed | warm daemon (10–20× on recompiles), provisional ghosts for pitch moves; caching of systems and windowed compiles not started |
+| M4 speed | warm daemon (10–20× on recompiles), provisional previews from real engraved glyphs, cancellable full-score re-engraving on every edit with provisional ghost glyphs; in-app verification and content-addressed page caching not started |
 | M5 editor and toolchains | not started (LSP client, tree-sitter highlighting, toolchain manager UI) |
 | M6 programmability | CLI, MCP, socket, pondside.toml: done; agent pane not started |
 | M7 Lexicon | storage, tiers, validation, expansion, checking, six core entries: done; browser, promotion, previews, lock not started |
@@ -898,11 +896,26 @@ Two parts, since no LilyPond compile will ever take 0 s:
      crashes on 2.24.3 (`ly:paper-get-font: Wrong type argument`) and
      leaves pages incomplete. Dropped.
 2. **The screen answers before LilyPond does.** Insert, move, delete and
-   duration changes draw provisional marks at once (a ghost notehead, a
-   strike-through, a duration badge) that the next engraving replaces.
+   duration changes draw provisional marks at once (the real engraved
+   notehead and stem moved to the new position, a strike-through, a duration
+   badge) that the next engraving replaces. Mouse entry uses the same
+   engraved glyph instead of an invented ellipse.
 
-Still to do for big scores (M4 proper): recompile only the systems an edit
-touches, and engrave the visible pages first.
+Every edit recompiles the whole score. A per-system tile renderer was
+tried and removed: fitting a filtered one-system engraving back onto the
+old page needed paper-width guesses, horizontal scaling and special cases
+for graphic scores, and it was not trustworthy enough to replace the full
+render. Provisional ghost glyphs still cover the wait; the full render is
+the only source of pages.
+
+Renders are single-flight. A new edit cancels the render in flight, stops
+the daemon's current job, and advances a generation counter; only the
+newest generation may publish pages. An earlier compile that has already
+answered is discarded, so it cannot briefly restore deleted notes. Undo
+and redo go through the same edit path and schedule the same full render.
+Provisional deletion also refreshes the selection overlay after its
+glyphs are marked removed, so the accent highlight cannot outlive the
+notes it came from.
 
 Also from that feedback: pages drew in the wrong places after zooming
 until hovered (a page view now redraws when it is resized); note keys

@@ -85,11 +85,14 @@ public struct LilyPondEngraver: Sendable {
 
     /// Compiles `source` into `outputDirectory`, which should be empty or
     /// private to this compile. Pages are returned in page order.
-    public func engrave(_ source: URL, purpose: EngravePurpose, outputDirectory: URL) async throws -> EngraveResult {
+    public func engrave(_ source: URL, purpose: EngravePurpose, outputDirectory: URL,
+                       extraSettings: String = "") async throws -> EngraveResult {
         if case .canvas = purpose, let daemon {
             do {
-                return try await daemon.engrave(source, outputDirectory: outputDirectory, extraSettings: TimingDump.listener)
+                return try await daemon.engrave(source, outputDirectory: outputDirectory,
+                                                extraSettings: TimingDump.listener + extraSettings)
             } catch {
+                if Task.isCancelled { throw error }
                 // A dead or stuck daemon must never cost an engraving.
             }
         }
@@ -99,7 +102,7 @@ public struct LilyPondEngraver: Sendable {
         if case .canvas = purpose {
             let url = outputDirectory.appendingPathComponent("pondside-session.ily")
             // Every canvas compile also logs timing, so cue times are always current.
-            try Data((SessionSettings.canvas + SessionSettings.fastSVG + TimingDump.listener).utf8).write(to: url)
+            try Data((SessionSettings.canvas + SessionSettings.fastSVG + TimingDump.listener + extraSettings).utf8).write(to: url)
             settings = url
         }
         let clock = ContinuousClock()

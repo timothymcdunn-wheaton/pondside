@@ -61,6 +61,10 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
         score.open()
         updateStatus()
         if !window.setFrameUsingName(window.frameAutosaveName) { window.center() }
+        NotificationCenter.default.addObserver(self, selector: #selector(undoHistoryChanged(_:)),
+                                               name: .NSUndoManagerDidUndoChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(undoHistoryChanged(_:)),
+                                               name: .NSUndoManagerDidRedoChange, object: nil)
     }
 
     @available(*, unavailable)
@@ -406,7 +410,10 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
             let gone = events.allSatisfy { isEngraved($0) } ? highlighted : []
             let edit = scoreEditor.delete(events: events)
             apply(edit)
-            if edit != nil { canvas.provisionalStrike(gone, path: activeFile.url.path) }
+            if edit != nil {
+                canvas.provisionalDelete(gone, path: activeFile.url.path)
+                refreshHighlight(reveal: false)
+            }
         case .togglePostEvent(let text):
             let eligible = events.filter { tree.events[$0].acceptsNoteEntry }
             apply(scoreEditor.togglePostEvent(text, events: eligible))
@@ -446,8 +453,9 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
         let anchorDiatonic = engraved ? tree.events[anchor].notes.first.map { tree.notes[$0].absolute.diatonicIndex } : nil
         let edit = ScoreEditor(tree).insert(step: step, after: anchor, duration: noteInput.armedDuration)
         apply(edit)
+        guard edit != nil else { return }
         // Instant feedback while LilyPond engraves: a ghost of the new note.
-        if edit != nil, step != nil, let e = targets().events.first, let n = tree.events[e].notes.first {
+        if step != nil, let e = targets().events.first, let n = tree.events[e].notes.first {
             canvas.provisionalInsert(after: anchorPositions, path: activeFile.url.path,
                                      anchorDiatonic: anchorDiatonic, diatonic: tree.notes[n].absolute.diatonicIndex)
         }
@@ -596,6 +604,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     // MARK: NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
+        NotificationCenter.default.removeObserver(self)
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
         saveLayout()
@@ -610,6 +619,18 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     /// ⌘Z from either pane undoes the visible file's edits, score and text alike.
     func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? {
         activeFile.undoManager
+    }
+
+    @objc private func undoHistoryChanged(_ notification: Notification) {
+        guard let manager = notification.object as? UndoManager,
+              manager === activeFile.undoManager else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let text = self.editor.text
+            guard text != self.activeFile.text else { return }
+            self.editor.onUserEdit?(text)
+            self.refreshHighlight(reveal: false)
+        }
     }
 }
 

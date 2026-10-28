@@ -119,8 +119,9 @@ final class ScoreDocument {
     /// Files that contribute notes but produced no point-and-click links.
     private(set) var unlinkedFiles: [SourceFile] = []
 
-    private var compileRunning = false
-    private var compilePending = false
+    private var renderTask: Task<Void, Never>?
+    private var renderGeneration = 0
+    private var compilingGeneration: Int?
     private let workDirectory: URL
     private var opened = false
 
@@ -165,6 +166,8 @@ final class ScoreDocument {
 
     func close() {
         flushPendingSaves()
+        renderTask?.cancel()
+        renderTask = nil
         let d = daemon
         Task { await d?.stop() }
         for f in files {
@@ -311,15 +314,16 @@ final class ScoreDocument {
 
     // MARK: Engraving
 
-    /// Compiles the root on disk. Compiles never overlap; requests that
-    /// arrive mid-compile collapse into one follow-up compile.
+    /// Compiles the root on disk. Only the newest request may finish: a
+    /// request cancels any render still in flight, and its result is thrown
+    /// away even if LilyPond had already answered.
     func engrave() {
         guard let installation else { return }
-        if compileRunning {
-            compilePending = true
-            return
-        }
-        compileRunning = true
+        let prior = renderTask
+        let needsStop = compilingGeneration != nil
+        renderGeneration += 1
+        let generation = renderGeneration
+        prior?.cancel()
         setStatus(.compiling)
         let engraver = LilyPondEngraver(installation: installation, daemon: daemon)
         let source = url
@@ -327,8 +331,17 @@ final class ScoreDocument {
         // mapped back onto text that has moved on since.
         for f in files { f.pendingSnapshot = (try? String(contentsOf: f.url, encoding: .utf8)) ?? f.text }
         let out = workDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        Task {
+        let daemon = self.daemon
+        renderTask = Task { [weak self] in
+            guard let self else { return }
+            if needsStop { await daemon?.stop() }
+            await prior?.value
+            guard !Task.isCancelled, self.renderGeneration == generation else { return }
+            self.compilingGeneration = generation
             let outcome = await Self.compile(engraver, source: source, out: out)
+            if self.compilingGeneration == generation { self.compilingGeneration = nil }
+            guard !Task.isCancelled, self.renderGeneration == generation else { return }
+            self.renderTask = nil
             self.finish(outcome)
         }
     }
@@ -352,7 +365,6 @@ final class ScoreDocument {
     }
 
     private func finish(_ outcome: Outcome) {
-        compileRunning = false
         lastLog = outcome.result?.messages ?? outcome.error ?? ""
         if let result = outcome.result, result.succeeded {
             let rate = (try? ProjectConfig.find(from: url))?.sampleRate ?? 48000
@@ -385,10 +397,6 @@ final class ScoreDocument {
             delegate?.documentDidEngrave(self)
         } else {
             setStatus(.failed(outcome.error ?? "unknown error"))
-        }
-        if compilePending {
-            compilePending = false
-            engrave()
         }
     }
 

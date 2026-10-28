@@ -43,8 +43,9 @@ final class RenderedPage {
 
     /// Draws the music. The context must already map page (viewBox) units
     /// to the destination, y pointing down.
-    func draw(in ctx: CGContext, visible: Rect?) {
+    func draw(in ctx: CGContext, visible: Rect?, excluding removed: Set<Graphic> = []) {
         for (i, item) in items.enumerated() {
+            if !removed.isEmpty, removed.contains(page.graphics[i]) { continue }
             if let visible, !page.graphics[i].bounds.intersects(visible) { continue }
             switch item {
             case let .path(path, fill, stroke, style):
@@ -71,6 +72,52 @@ final class RenderedPage {
                 CTLineDraw(line, ctx)
                 ctx.restoreGState()
             }
+        }
+    }
+
+    /// Draws one freshly-built graphic, such as a provisional glyph moved
+    /// away from its engraved position. The cached `items` exist for the
+    /// hundreds of settled glyphs; this path is only for the few previews.
+    static func draw(_ graphic: Graphic, in ctx: CGContext, tint: NSColor? = nil, alpha: CGFloat = 1) {
+        switch graphic.content {
+        case let .path(path, fill, stroke, style):
+            let cg = cgPath(path)
+            if let fill {
+                ctx.addPath(cg)
+                ctx.setFillColor(tint?.withAlphaComponent(alpha).cgColor ?? cgColor(fill))
+                ctx.fillPath()
+            }
+            if let stroke {
+                ctx.addPath(cg)
+                ctx.setStrokeColor(tint?.withAlphaComponent(alpha).cgColor ?? cgColor(stroke))
+                ctx.setLineWidth(style.width)
+                ctx.setLineCap(cap(style.cap))
+                ctx.setLineJoin(join(style.join))
+                ctx.setLineDash(phase: 0, lengths: style.dash.map { CGFloat($0) })
+                ctx.strokePath()
+            }
+        case let .text(run):
+            let color = tint ?? NSColor(cgColor: cgColor(run.color)) ?? .black
+            let font = FontResolver.font(family: run.fontFamily, size: run.fontSize, bold: run.bold, italic: run.italic)
+            let attributed = NSAttributedString(string: run.string, attributes: [
+                .font: font,
+                .foregroundColor: color.withAlphaComponent(color.alphaComponent * alpha),
+            ])
+            let line = CTLineCreateWithAttributedString(attributed as CFAttributedString)
+            let width = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+            let x: CGFloat
+            switch run.anchor {
+            case .start: x = 0
+            case .middle: x = -width / 2
+            case .end: x = -width
+            }
+            let t = run.transform
+            ctx.saveGState()
+            ctx.concatenate(CGAffineTransform(a: t.a, b: t.b, c: t.c, d: t.d, tx: t.e, ty: t.f))
+            ctx.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
+            ctx.textPosition = CGPoint(x: x, y: 0)
+            CTLineDraw(line, ctx)
+            ctx.restoreGState()
         }
     }
 

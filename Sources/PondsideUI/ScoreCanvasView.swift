@@ -153,6 +153,7 @@ final class ScoreCanvasView: NSView {
         for v in pageViews {
             guard let page = v.rendered?.page else { continue }
             let matches = page.graphics.filter { g in
+                guard !v.removed.contains(g) else { return false }
                 guard let link = g.link, positions.contains(link.position) else { return false }
                 guard let path else { return true }
                 if let known = sameFile[link.path] { return known }
@@ -175,7 +176,7 @@ final class ScoreCanvasView: NSView {
     fileprivate func pageView(_ v: PageView, clickedAt p: Point, event: NSEvent) {
         window?.makeFirstResponder(self)
         let tolerance = 0.3 / max(zoom, 0.5)
-        let link = v.rendered?.page.hitTest(p, tolerance: tolerance)?.link
+        let link = v.rendered?.page.hitTest(p, tolerance: tolerance, excluding: v.removed)?.link
         if link == nil, let page = v.rendered?.page, delegate?.canvasWantsMouseEntry(self) == true {
             guard let staff = page.staff(at: p, among: v.staves) else {
                 delegate?.canvas(self, missedStaffWith: v.staves.count)
@@ -202,7 +203,25 @@ final class ScoreCanvasView: NSView {
             v.ghost = nil
             return
         }
-        v.ghost = Ghost(staff: staff, x: p.x, position: staff.position(ofY: p.y))
+        v.ghost = Ghost(staff: staff, x: p.x, position: staff.position(ofY: p.y),
+                        glyph: sampleGlyph(on: staff, page: page, near: p.x))
+    }
+
+    /// A real notehead on the staff to use as the mouse-entry template. The
+    /// nearest one is best: its spacing and glyph weight belong to this staff.
+    private func sampleGlyph(on staff: Staff, page: EngravedPage, near x: Double) -> NoteGlyph? {
+        let band = staff.band()
+        var byPosition: [SourcePosition: [Graphic]] = [:]
+        for g in page.graphics {
+            guard let link = g.link, band.contains(Point(g.bounds.midX, g.bounds.midY)) else { continue }
+            byPosition[link.position, default: []].append(g)
+        }
+        var best: NoteGlyph?
+        for graphics in byPosition.values {
+            guard let glyph = EngravedPage.noteGlyph(among: graphics, space: staff.space) else { continue }
+            if best == nil || abs(glyph.head.midX - x) < abs(best!.head.midX - x) { best = glyph }
+        }
+        return best
     }
 
     /// Provisional rendering: ghost noteheads where the given notes are
@@ -221,13 +240,11 @@ final class ScoreCanvasView: NSView {
             for (_, graphics) in byPosition {
                 guard let first = graphics.first,
                       let staff = page.staff(at: Point(first.bounds.midX, first.bounds.midY), among: v.staves),
-                      let head = EngravedPage.notehead(among: graphics, space: staff.space) else { continue }
+                      let glyph = EngravedPage.noteGlyph(among: graphics, space: staff.space) else { continue }
                 // Accumulate: two quick ↑ before a recompile move the ghost twice.
-                let base = ghosts.first { abs($0.midX - head.bounds.midX) < staff.space * 0.3 } ?? head.bounds
-                ghosts.removeAll { abs($0.midX - head.bounds.midX) < staff.space * 0.3 }
-                var r = base
-                r.y -= Double(halfSpaces) * staff.space / 2
-                ghosts.append(r)
+                let base = ghosts.first { abs($0.head.midX - glyph.head.midX) < staff.space * 0.3 } ?? glyph
+                ghosts.removeAll { abs($0.head.midX - glyph.head.midX) < staff.space * 0.3 }
+                ghosts.append(base.translated(by: Point(0, -Double(halfSpaces) * staff.space / 2)))
             }
             v.provisional = ghosts
         }
@@ -248,36 +265,51 @@ final class ScoreCanvasView: NSView {
 
     /// The last provisional note placed, so several quick insertions chain
     /// to the right of each other before LilyPond answers.
-    private var lastInserted: (view: PageView, head: Rect, space: Double, diatonic: Int)?
+    private var lastInserted: (view: PageView, glyph: NoteGlyph, diatonic: Int)?
 
-    /// Provisional rendering of an insertion: a ghost notehead after the
-    /// anchor's notehead, at the new pitch's staff position.
+    /// Provisional rendering of an insertion: a ghost note after the anchor's
+    /// notehead, at the new pitch's staff position.
     func provisionalInsert(after positions: Set<SourcePosition>, path: String, anchorDiatonic: Int?, diatonic: Int) {
-        var base: (view: PageView, head: Rect, space: Double, diatonic: Int)?
+        var base: (view: PageView, glyph: NoteGlyph, diatonic: Int)?
         if let anchorDiatonic {
             for (v, byPosition) in linked(positions, path: path) {
                 guard let page = v.rendered?.page else { continue }
                 for (_, graphics) in byPosition {
                     guard let first = graphics.first,
                           let staff = page.staff(at: Point(first.bounds.midX, first.bounds.midY), among: v.staves),
-                          let head = EngravedPage.notehead(among: graphics, space: staff.space) else { continue }
-                    if base == nil || head.bounds.maxX > base!.head.maxX { base = (v, head.bounds, staff.space, anchorDiatonic) }
+                          let glyph = EngravedPage.noteGlyph(among: graphics, space: staff.space) else { continue }
+                    if base == nil || glyph.head.maxX > base!.glyph.head.maxX {
+                        base = (v, glyph, anchorDiatonic)
+                    }
                 }
             }
         }
         if base == nil { base = lastInserted }
         guard let b = base else { return }
-        var r = b.head
-        r.x = b.head.maxX + b.space * 0.8
-        r.y -= Double(diatonic - b.diatonic) * b.space / 2
-        b.view.provisional.append(r)
-        lastInserted = (b.view, r, b.space, diatonic)
+        let head = b.glyph.head
+        let placed = b.glyph.placingHead(at: Point(
+            head.maxX + b.glyph.space * 0.8 + head.width / 2,
+            head.midY - Double(diatonic - b.diatonic) * b.glyph.space / 2))
+        b.view.provisional.append(placed)
+        lastInserted = (b.view, placed, diatonic)
     }
 
-    /// Provisional rendering of a deletion: the glyphs struck through.
-    func provisionalStrike(_ positions: Set<SourcePosition>, path: String) {
+    /// Provisional deletion: take the event's glyphs out of the vector page at
+    /// once, rather than crossing them out. The next engraving reflows the
+    /// music; until then the rest of the page stays exactly where it was.
+    func provisionalDelete(_ positions: Set<SourcePosition>, path: String) {
         for (v, byPosition) in linked(positions, path: path) {
-            v.strikes += byPosition.values.compactMap { EngravedPage.bounds(of: $0) }
+            guard let page = v.rendered?.page else { continue }
+            for graphics in byPosition.values {
+                guard let first = graphics.first,
+                      let staff = page.staff(at: Point(first.bounds.midX, first.bounds.midY),
+                                             among: v.staves) else {
+                    v.removed.formUnion(graphics)
+                    continue
+                }
+                v.removed.formUnion(EngravedPage.removalSet(
+                    for: graphics, among: page.graphics, space: staff.space))
+            }
         }
     }
 
@@ -298,7 +330,7 @@ final class ScoreCanvasView: NSView {
     }
 
     fileprivate func pageView(_ v: PageView, selected rect: Rect) {
-        let links = v.rendered?.page.linkedGraphics(in: rect).compactMap(\.link) ?? []
+        let links = v.rendered?.page.linkedGraphics(in: rect, excluding: v.removed).compactMap(\.link) ?? []
         delegate?.canvas(self, didSelect: links)
     }
 
@@ -335,6 +367,8 @@ private struct Ghost: Equatable {
     var staff: Staff
     var x: Double
     var position: Int
+    /// The real engraved notehead (and stem, flags, dot) used as the preview.
+    var glyph: NoteGlyph?
 }
 
 /// One sheet of paper. Opaque: nothing ever shows through the music.
@@ -346,16 +380,18 @@ private final class PageView: NSView {
             staves = rendered?.page.staves ?? []
             ghost = nil
             provisional = []
-            strikes = []
+            removed = []
+            highlights = []
             badges = []
             needsDisplay = true
         }
     }
     private(set) var staves: [Staff] = []
     var ghost: Ghost? { didSet { if ghost != oldValue { needsDisplay = true } } }
-    /// Notehead rectangles of provisional (not yet engraved) positions.
-    var provisional: [Rect] = [] { didSet { if provisional != oldValue { needsDisplay = true } } }
-    var strikes: [Rect] = [] { didSet { needsDisplay = true } }
+    /// Engraved note glyphs moved to provisional (not yet engraved) positions.
+    var provisional: [NoteGlyph] = [] { didSet { if provisional != oldValue { needsDisplay = true } } }
+    /// Glyphs the provisional deletion has taken out of the page.
+    var removed: Set<Graphic> = [] { didSet { if removed != oldValue { needsDisplay = true } } }
     var badges: [(Rect, String)] = [] { didSet { needsDisplay = true } }
     var highlights: [Rect] = [] { didSet { if highlights != oldValue { needsDisplay = true } } }
     var lightsOut = false { didSet { needsDisplay = true } }
@@ -422,7 +458,7 @@ private final class PageView: NSView {
         ctx.translateBy(x: -vb.x, y: -vb.y)
         let visible = Rect(x: vb.x + dirtyRect.minX / s, y: vb.y + dirtyRect.minY / s,
                            width: dirtyRect.width / s, height: dirtyRect.height / s)
-        rendered.draw(in: ctx, visible: visible)
+        rendered.draw(in: ctx, visible: visible, excluding: removed)
         ctx.restoreGState()
 
         if lightsOut {
@@ -444,20 +480,22 @@ private final class PageView: NSView {
             ctx.strokePath()
         }
 
-        if let ghost { drawGhost(ghost, in: ctx, color: accent) }
-        for r in provisional {
-            ctx.setFillColor(accent.withAlphaComponent(0.55).cgColor)
-            ctx.fillEllipse(in: viewRect(for: r).insetBy(dx: 0.5, dy: 1))
+        // Provisional marks use ink, not the accent: the preview is meant to
+        // look like the engraving that is about to land, not like a UI ghost.
+        let ink = NSColor.black
+        if let ghost { drawGhost(ghost, in: ctx, color: ink) }
+        if !provisional.isEmpty {
+            ctx.saveGState()
+            ctx.scaleBy(x: s, y: s)
+            ctx.translateBy(x: -vb.x, y: -vb.y)
+            for glyph in provisional {
+                for graphic in glyph.graphics {
+                    RenderedPage.draw(graphic, in: ctx, tint: ink, alpha: 0.55)
+                }
+                drawLedgers(for: glyph, in: ctx, color: ink)
+            }
+            ctx.restoreGState()
         }
-        // Overlays only: the engraved music underneath is untouched.
-        ctx.setStrokeColor(accent.withAlphaComponent(0.85).cgColor)
-        ctx.setLineWidth(1.5)
-        for r in strikes {
-            let v = viewRect(for: r).insetBy(dx: -2, dy: -2)
-            ctx.move(to: CGPoint(x: v.minX, y: v.minY)); ctx.addLine(to: CGPoint(x: v.maxX, y: v.maxY))
-            ctx.move(to: CGPoint(x: v.minX, y: v.maxY)); ctx.addLine(to: CGPoint(x: v.maxX, y: v.minY))
-        }
-        ctx.strokePath()
         for (r, text) in badges {
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: NSFont.monospacedSystemFont(ofSize: Theme.secondarySize, weight: .semibold),
@@ -484,11 +522,26 @@ private final class PageView: NSView {
         }
     }
 
-    /// The notehead a click would place, with any ledger lines it needs.
-    /// An overlay in the accent colour: the music is never recoloured.
+    /// The note a click would place, with any ledger lines it needs.
+    /// A real engraved glyph in the accent colour: the music underneath is
+    /// never recoloured.
     private func drawGhost(_ ghost: Ghost, in ctx: CGContext, color: NSColor) {
         let staff = ghost.staff, space = staff.space
         let y = staff.y(ofPosition: ghost.position)
+
+        if let glyph = ghost.glyph, let vb = rendered?.page.viewBox {
+            let placed = glyph.placingHead(at: Point(ghost.x, y))
+            ctx.saveGState()
+            ctx.scaleBy(x: scale, y: scale)
+            ctx.translateBy(x: -vb.x, y: -vb.y)
+            for graphic in placed.graphics {
+                RenderedPage.draw(graphic, in: ctx, tint: color, alpha: 0.55)
+            }
+            drawLedgers(for: placed, in: ctx, color: color)
+            ctx.restoreGState()
+            return
+        }
+
         let head = viewRect(for: Rect(x: ghost.x - 0.65 * space, y: y - 0.5 * space, width: 1.3 * space, height: space))
         ctx.setFillColor(color.withAlphaComponent(0.55).cgColor)
         ctx.fillEllipse(in: head)
@@ -501,6 +554,27 @@ private final class PageView: NSView {
             let r = viewRect(for: Rect(x: ghost.x - space, y: staff.y(ofPosition: p), width: 2 * space, height: 0))
             ctx.move(to: CGPoint(x: r.minX, y: r.minY))
             ctx.addLine(to: CGPoint(x: r.maxX, y: r.minY))
+        }
+        ctx.strokePath()
+    }
+
+    /// Ledger lines at a provisional glyph's position. The page transform must
+    /// already be in effect (page coordinates, y down).
+    private func drawLedgers(for glyph: NoteGlyph, in ctx: CGContext, color: NSColor) {
+        guard let staff = staves.min(by: {
+            abs($0.y(ofPosition: 4) - glyph.head.midY) < abs($1.y(ofPosition: 4) - glyph.head.midY)
+        }) else { return }
+        let position = staff.position(ofY: glyph.head.midY)
+        var ledgers: [Int] = []
+        if position <= -2 { ledgers = Array(stride(from: -2, through: position, by: -2)) }
+        if position >= 10 { ledgers = Array(stride(from: 10, through: position, by: 2)) }
+        guard !ledgers.isEmpty else { return }
+        ctx.setStrokeColor(color.withAlphaComponent(0.7).cgColor)
+        ctx.setLineWidth(max(0.08, 0.12 * staff.space))
+        for p in ledgers {
+            let y = staff.y(ofPosition: p)
+            ctx.move(to: CGPoint(x: glyph.head.midX - staff.space, y: y))
+            ctx.addLine(to: CGPoint(x: glyph.head.midX + staff.space, y: y))
         }
         ctx.strokePath()
     }

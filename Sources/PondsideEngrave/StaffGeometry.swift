@@ -82,11 +82,8 @@ extension EngravedPage {
     /// staff space tall and at least as wide — not the accidental (taller),
     /// stem (thinner), dot or flag.
     public static func notehead(among graphics: [Graphic], space: Double) -> Graphic? {
-        graphics.filter {
-            $0.bounds.height >= 0.7 * space && $0.bounds.height <= 1.45 * space && $0.bounds.width >= 0.9 * space
-                && $0.bounds.width <= 3 * space
-        }
-        .min { abs($0.bounds.height - space) < abs($1.bounds.height - space) }
+        graphics.filter { isNotehead($0, space: space) }
+            .min { abs($0.bounds.height - space) < abs($1.bounds.height - space) }
     }
 }
 
