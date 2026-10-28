@@ -1,0 +1,793 @@
+0	1	tempo	100.0
+0	1	note	elecUp	60
+0	1	note	elecUp	62
+0	1	note	elecUp	64
+0	1	note	elecUp	67
+0	1	note	elecUp	69
+0	1	group	elecUp	start
+0	1	group	elecUp	stop
+0	1	text	cue 1
+1/8	1	text	improv 1
+1/8	1	note	flute	62
+3	1	note	flute	69
+4	1	note	flute	67
+55/8	1	note	flute	64
+65/8	1	note	flute	62
+33/4	1	note	flute	64
+67/8	1	note	flute	69
+17/2	1	note	flute	67
+69/8	1	note	flute	74
+71/8	1	note	flute	72
+79/8	1	note	flute	67
+87/8	1	note	flute	69
+27/2	2	text	improv end
+27/2	2	tempo	120.0
+27/2	2	note	flute	72
+271/20	2	note	flute	74
+68/5	2	note	flute	76
+273/20	2	note	flute	79
+137/10	2	note	flute	81
+55/4	2	note	flute	84
+69/5	2	note	flute	81
+277/20	2	note	flute	79
+139/10	2	note	flute	76
+279/20	2	note	flute	74
+14	3	text	improv 2
+14	3	note	flute	64
+14	3	tempo	16.0
+14	3	text	cue 2
+57/4	3	note	flute	64
+115/8	3	note	flute	62
+117/8	3	note	flute	69
+59/4	3	note	flute	67
+119/8	3	note	flute	72
+121/8	3	note	flute	64
+61/4	3	note	flute	62
+123/8	3	note	flute	69
+31/2	3	note	flute	67
+125/8	3	note	flute	72
+16	4	text	improv end
+16	4	tempo	80.0
+16	4	note	flute	69
+65/4	4	note	flute	64
+33/2	4	note	flute	74
+33/2	4	tempo	60.0
+33/2	4	note	elecUp	60
+33/2	4	note	elecUp	62
+33/2	4	note	elecUp	64
+33/2	4	note	elecUp	66
+33/2	4	note	elecUp	69
+33/2	4	group	elecUp	start
+33/2	4	group	elecUp	stop
+33/2	4	text	cue 3
+35/2	4	tempo	20.0
+71/4	5	note	flute	69
+71/4	5	tempo	80.0
+71/4	5	note	elecUp	62
+71/4	5	note	elecUp	64
+71/4	5	note	elecUp	66
+71/4	5	note	elecUp	69
+71/4	5	note	elecUp	71
+71/4	5	group	elecUp	start
+71/4	5	group	elecUp	stop
+18	5	note	flute	62
+73/4	5	note	flute	64
+73/4	5	tempo	20.0
+73/4	5	text	cue 4
+75/4	5	tempo	60.0
+75/4	5	note	elecUp	66
+75/4	5	note	elecUp	68
+75/4	5	note	elecUp	70
+75/4	5	note	elecUp	73
+75/4	5	note	elecUp	75
+75/4	5	group	elecUp	start
+75/4	5	group	elecUp	stop
+39/2	6	note	flute	68
+39/2	6	tempo	80.0
+79/4	6	note	flute	66
+159/8	6	text	cue 5
+20	6	note	flute	73
+20	6	note	elecUp	64
+20	6	note	elecUp	66
+20	6	note	elecUp	68
+20	6	note	elecUp	70
+20	6	note	elecUp	73
+20	6	group	elecUp	start
+20	6	group	elecUp	stop
+81/4	6	note	flute	71
+41/2	6	note	flute	78
+41/2	6	note	elecUp	64
+41/2	6	note	elecUp	66
+41/2	6	note	elecUp	68
+41/2	6	note	elecUp	71
+41/2	6	note	elecUp	73
+41/2	6	group	elecUp	start
+41/2	6	group	elecUp	stop
+21	7	note	flute	75
+85/4	7	note	flute	77
+171/8	7	text	cue 6
+43/2	7	note	flute	82
+43/2	7	tempo	50.0
+43/2	7	note	elecUp	68
+43/2	7	note	elecUp	70
+43/2	7	note	elecUp	72
+43/2	7	note	elecUp	75
+43/2	7	note	elecUp	77
+43/2	7	group	elecUp	start
+43/2	7	group	elecUp	stop
+87/4	7	note	elecUp	66
+87/4	7	note	elecUp	68
+87/4	7	note	elecUp	70
+87/4	7	note	elecUp	72
+87/4	7	note	elecUp	75
+87/4	7	group	elecUp	start
+87/4	7	group	elecUp	stop
+22	7	note	elecUp	66
+22	7	note	elecUp	68
+22	7	note	elecUp	70
+22	7	note	elecUp	73
+22	7	note	elecUp	75
+22	7	group	elecUp	start
+22	7	group	elecUp	stop
+45/2	7	tempo	10.0
+91/4	8	note	flute	69
+91/4	8	tempo	80.0
+23	8	note	flute	62
+185/8	8	text	cue 7
+93/4	8	note	flute	64
+93/4	8	tempo	60.0
+93/4	8	note	elecUp	60
+93/4	8	note	elecUp	62
+93/4	8	note	elecUp	64
+93/4	8	note	elecUp	67
+93/4	8	note	elecUp	69
+93/4	8	group	elecUp	start
+93/4	8	group	elecUp	stop
+97/4	8	tempo	80.0
+49/2	9	note	flute	69
+99/4	9	note	flute	67
+25	9	note	flute	72
+25	9	tempo	20.0
+25	9	text	cue 8
+51/2	9	tempo	60.0
+51/2	9	note	elecUp	60
+51/2	9	note	elecUp	62
+51/2	9	note	elecUp	64
+51/2	9	note	elecUp	66
+51/2	9	note	elecUp	69
+51/2	9	group	elecUp	start
+51/2	9	group	elecUp	stop
+105/4	10	note	flute	69
+105/4	10	tempo	80.0
+105/4	10	note	elecUp	62
+105/4	10	note	elecUp	64
+105/4	10	note	elecUp	66
+105/4	10	note	elecUp	69
+105/4	10	note	elecUp	71
+105/4	10	group	elecUp	start
+105/4	10	group	elecUp	stop
+53/2	10	note	flute	62
+107/4	10	note	flute	64
+107/4	10	tempo	30.0
+111/4	10	tempo	12.0
+223/8	10	text	cue 9
+28	11	note	flute	73
+28	11	tempo	80.0
+28	11	note	elecUp	61
+28	11	note	elecUp	64
+28	11	note	elecUp	66
+28	11	note	elecUp	68
+28	11	note	elecUp	71
+28	11	group	elecUp	start
+28	11	group	elecUp	stop
+113/4	11	note	flute	71
+57/2	11	note	flute	76
+57/2	11	tempo	60.0
+235/8	11	text	cue 10
+59/2	11	tempo	30.0
+119/4	12	tempo	120.0
+119/4	12	note	flute	80
+119/4	12	note	elecUp	60
+119/4	12	note	elecUp	63
+119/4	12	note	elecUp	65
+119/4	12	note	elecUp	68
+119/4	12	note	elecUp	70
+119/4	12	group	elecUp	start
+119/4	12	group	elecUp	stop
+149/5	12	note	flute	82
+597/20	12	note	flute	84
+299/10	12	note	flute	87
+599/20	12	note	flute	89
+30	12	note	flute	92
+601/20	12	note	flute	89
+301/10	12	note	flute	87
+603/20	12	note	flute	84
+151/5	12	note	flute	82
+121/4	12	tempo	60.0
+121/4	12	text	cue 11
+61/2	13	tempo	80.0
+61/2	13	note	flute	73
+61/2	13	note	elecUp	61
+61/2	13	note	elecUp	64
+61/2	13	note	elecUp	65
+61/2	13	note	elecUp	68
+61/2	13	note	elecUp	71
+61/2	13	group	elecUp	start
+61/2	13	group	elecUp	stop
+123/4	13	note	flute	68
+31	13	note	flute	77
+31	13	tempo	60.0
+255/8	13	text	cue 12
+32	13	tempo	30.0
+129/4	14	tempo	120.0
+129/4	14	note	flute	80
+129/4	14	note	elecUp	60
+129/4	14	note	elecUp	63
+129/4	14	note	elecUp	65
+129/4	14	note	elecUp	68
+129/4	14	note	elecUp	69
+129/4	14	group	elecUp	start
+129/4	14	group	elecUp	stop
+323/10	14	note	flute	81
+647/20	14	note	flute	84
+162/5	14	note	flute	87
+649/20	14	note	flute	89
+65/2	14	note	flute	92
+651/20	14	note	flute	89
+163/5	14	note	flute	87
+653/20	14	note	flute	84
+327/10	14	note	flute	81
+131/4	14	tempo	60.0
+131/4	14	text	cue 13
+33	15	tempo	80.0
+33	15	note	flute	64
+33	15	note	elecUp	62
+33	15	note	elecUp	64
+33	15	note	elecUp	65
+33	15	note	elecUp	68
+33	15	note	elecUp	71
+33	15	group	elecUp	start
+33	15	group	elecUp	stop
+133/4	15	note	flute	62
+67/2	15	note	flute	65
+135/4	15	note	flute	64
+34	15	note	flute	67
+34	15	note	elecUp	62
+34	15	note	elecUp	64
+34	15	note	elecUp	65
+34	15	note	elecUp	67
+34	15	note	elecUp	71
+34	15	group	elecUp	start
+34	15	group	elecUp	stop
+273/8	15	note	flute	65
+137/4	15	note	flute	71
+275/8	15	note	flute	67
+69/2	15	note	flute	74
+69/2	15	tempo	60.0
+71/2	15	tempo	30.0
+71/2	15	text	cue 14
+143/4	16	tempo	120.0
+143/4	16	note	flute	81
+143/4	16	note	elecUp	60
+143/4	16	note	elecUp	64
+143/4	16	note	elecUp	65
+143/4	16	note	elecUp	68
+143/4	16	note	elecUp	69
+143/4	16	group	elecUp	start
+143/4	16	group	elecUp	stop
+859/24	16	note	flute	80
+215/6	16	note	flute	88
+287/8	16	note	flute	84
+431/12	16	note	flute	92
+863/24	16	note	flute	89
+36	16	note	flute	93
+865/24	16	note	flute	92
+433/12	16	note	flute	89
+289/8	16	note	flute	88
+217/6	16	note	flute	84
+869/24	16	note	flute	81
+145/4	16	tempo	60.0
+145/4	16	text	cue 15
+73/2	17	note	flute	81
+73/2	17	tempo	120.0
+73/2	17	note	elecUp	64
+73/2	17	note	elecUp	65
+73/2	17	note	elecUp	68
+73/2	17	note	elecUp	69
+73/2	17	note	elecUp	71
+73/2	17	group	elecUp	start
+73/2	17	group	elecUp	stop
+877/24	17	note	flute	80
+439/12	17	note	flute	88
+293/8	17	note	flute	83
+110/3	17	note	flute	92
+881/24	17	note	flute	89
+147/4	17	note	flute	93
+883/24	17	note	flute	92
+221/6	17	note	flute	89
+295/8	17	note	flute	88
+443/12	17	note	flute	83
+887/24	17	note	flute	81
+37	17	tempo	60.0
+37	17	text	cue 16
+149/4	18	note	flute	80
+149/4	18	tempo	120.0
+153/4	18	note	flute	81
+153/4	18	note	elecUp	64
+153/4	18	note	elecUp	65
+153/4	18	note	elecUp	68
+153/4	18	note	elecUp	69
+153/4	18	note	elecUp	70
+153/4	18	group	elecUp	start
+153/4	18	group	elecUp	stop
+919/24	18	note	flute	80
+115/3	18	note	flute	88
+307/8	18	note	flute	82
+461/12	18	note	flute	92
+923/24	18	note	flute	89
+77/2	18	note	flute	93
+925/24	18	note	flute	92
+463/12	18	note	flute	89
+309/8	18	note	flute	88
+116/3	18	note	flute	82
+929/24	18	note	flute	81
+155/4	18	tempo	60.0
+155/4	18	text	cue 17
+39	19	tempo	80.0
+39	19	note	flute	84
+39	19	note	elecUp	60
+39	19	note	elecUp	62
+39	19	note	elecUp	64
+39	19	note	elecUp	65
+39	19	note	elecUp	67
+39	19	group	elecUp	start
+39	19	group	elecUp	stop
+157/4	19	note	flute	77
+79/2	19	note	flute	79
+79/2	19	tempo	60.0
+81/2	19	tempo	30.0
+163/4	20	note	flute	76
+163/4	20	tempo	80.0
+163/4	20	note	elecUp	60
+163/4	20	note	elecUp	63
+163/4	20	note	elecUp	64
+163/4	20	note	elecUp	65
+163/4	20	note	elecUp	67
+163/4	20	group	elecUp	start
+163/4	20	group	elecUp	stop
+163/4	20	text	cue 18
+327/8	20	note	flute	75
+41	20	note	flute	79
+329/8	20	note	flute	77
+165/4	20	note	flute	84
+83/2	20	note	flute	79
+83/2	20	note	elecUp	60
+83/2	20	note	elecUp	63
+83/2	20	note	elecUp	64
+83/2	20	note	elecUp	66
+83/2	20	note	elecUp	67
+83/2	20	group	elecUp	start
+83/2	20	group	elecUp	stop
+1329/32	20	note	flute	84
+665/16	20	note	flute	87
+1331/32	20	note	flute	88
+333/8	20	note	flute	90
+1333/32	20	note	flute	88
+667/16	20	note	flute	87
+1335/32	20	note	flute	84
+167/4	20	note	flute	76
+1337/32	20	note	flute	78
+669/16	20	note	flute	79
+669/16	20	note	elecUp	60
+669/16	20	note	elecUp	62
+669/16	20	note	elecUp	64
+669/16	20	note	elecUp	66
+669/16	20	note	elecUp	67
+669/16	20	group	elecUp	start
+669/16	20	group	elecUp	stop
+1339/32	20	note	flute	84
+335/8	20	note	flute	87
+1341/32	20	note	flute	84
+671/16	20	note	flute	79
+1343/32	20	note	flute	78
+42	20	note	flute	76
+337/8	20	text	cue 19
+169/4	20	note	elecUp	60
+169/4	20	note	elecUp	62
+169/4	20	note	elecUp	64
+169/4	20	note	elecUp	66
+169/4	20	note	elecUp	68
+169/4	20	group	elecUp	start
+169/4	20	group	elecUp	stop
+85/2	20	note	flute	80
+683/16	20	note	elecUp	62
+683/16	20	note	elecUp	64
+683/16	20	note	elecUp	66
+683/16	20	note	elecUp	68
+683/16	20	note	elecUp	71
+683/16	20	group	elecUp	start
+683/16	20	group	elecUp	stop
+171/4	20	note	flute	76
+43	20	note	flute	80
+43	20	note	elecUp	61
+43	20	note	elecUp	64
+43	20	note	elecUp	66
+43	20	note	elecUp	68
+43	20	note	elecUp	71
+43	20	group	elecUp	start
+43	20	group	elecUp	stop
+1377/32	20	note	flute	76
+689/16	20	note	flute	80
+1379/32	20	note	flute	76
+345/8	20	note	flute	80
+1381/32	20	note	flute	76
+691/16	20	note	flute	80
+1383/32	20	note	flute	76
+173/4	20	note	flute	80
+1385/32	20	note	flute	79
+693/16	20	note	flute	82
+1387/32	20	note	flute	81
+347/8	20	note	flute	87
+1389/32	20	note	flute	83
+695/16	20	note	flute	81
+1391/32	20	note	flute	80
+87/2	20	note	flute	79
+1393/32	20	note	flute	75
+697/16	20	note	flute	81
+1395/32	20	note	flute	80
+349/8	20	note	flute	84
+1397/32	20	note	flute	82
+699/16	20	note	flute	80
+1399/32	20	note	flute	79
+175/4	21	note	flute	89
+175/4	21	note	elecUp	60
+175/4	21	note	elecUp	63
+175/4	21	note	elecUp	65
+175/4	21	note	elecUp	68
+175/4	21	note	elecUp	70
+175/4	21	group	elecUp	start
+175/4	21	group	elecUp	stop
+175/4	21	text	cue 20
+1401/32	21	note	flute	87
+701/16	21	note	flute	86
+1403/32	21	note	flute	84
+351/8	21	note	flute	82
+1405/32	21	note	flute	80
+703/16	21	note	flute	79
+1407/32	21	note	flute	77
+44	21	note	flute	75
+1409/32	21	note	flute	74
+705/16	21	note	flute	72
+1411/32	21	note	flute	70
+353/8	21	note	flute	68
+1413/32	21	note	flute	67
+707/16	21	note	flute	65
+1415/32	21	note	flute	63
+177/4	21	note	flute	63
+181/4	21	tempo	30.0
+91/2	21	note	flute	71
+91/2	21	tempo	80.0
+91/2	21	note	elecUp	61
+91/2	21	note	elecUp	63
+91/2	21	note	elecUp	66
+91/2	21	note	elecUp	68
+91/2	21	note	elecUp	70
+91/2	21	group	elecUp	start
+91/2	21	group	elecUp	stop
+91/2	21	text	cue 21
+183/4	21	note	flute	66
+46	21	note	flute	68
+46	21	tempo	60.0
+47	21	tempo	30.0
+189/4	22	tempo	80.0
+189/4	22	text	cue 22
+95/2	22	note	flute	68
+95/2	22	tempo	84.1025641025641
+191/4	22	note	flute	61
+48	22	note	flute	63
+99/2	22	note	flute	68
+199/4	22	note	flute	75
+50	22	note	flute	73
+207/4	22	note	flute	63
+52	22	note	flute	73
+109/2	22	note	flute	85
+231/4	23	tempo	120.0
+231/4	23	note	flute	80
+231/4	23	note	elecUp	60
+231/4	23	note	elecUp	63
+231/4	23	note	elecUp	65
+231/4	23	note	elecUp	68
+231/4	23	note	elecUp	70
+231/4	23	group	elecUp	start
+231/4	23	group	elecUp	stop
+231/4	23	text	cue 23
+289/5	23	note	flute	82
+1157/20	23	note	flute	84
+579/10	23	note	flute	87
+1159/20	23	note	flute	89
+58	23	note	flute	92
+1161/20	23	note	flute	89
+581/10	23	note	flute	87
+1163/20	23	note	flute	84
+291/5	23	note	flute	82
+233/4	23	tempo	60.0
+233/4	23	text	cue 24
+117/2	24	tempo	80.0
+117/2	24	note	flute	73
+117/2	24	note	elecUp	61
+117/2	24	note	elecUp	64
+117/2	24	note	elecUp	67
+117/2	24	note	elecUp	68
+117/2	24	note	elecUp	71
+117/2	24	group	elecUp	start
+117/2	24	group	elecUp	stop
+235/4	24	note	flute	68
+59	24	note	flute	79
+59	24	tempo	60.0
+479/8	24	text	cue 25
+60	24	tempo	30.0
+241/4	25	tempo	120.0
+241/4	25	note	flute	80
+241/4	25	note	elecUp	60
+241/4	25	note	elecUp	63
+241/4	25	note	elecUp	65
+241/4	25	note	elecUp	68
+241/4	25	note	elecUp	71
+241/4	25	group	elecUp	start
+241/4	25	group	elecUp	stop
+603/10	25	note	flute	83
+1207/20	25	note	flute	84
+302/5	25	note	flute	87
+1209/20	25	note	flute	89
+121/2	25	note	flute	92
+1211/20	25	note	flute	89
+303/5	25	note	flute	87
+1213/20	25	note	flute	84
+607/10	25	note	flute	83
+243/4	25	tempo	60.0
+243/4	25	text	cue 26
+61	26	tempo	80.0
+61	26	note	flute	64
+61	26	note	elecUp	60
+61	26	note	elecUp	61
+61	26	note	elecUp	64
+61	26	note	elecUp	67
+61	26	note	elecUp	68
+61	26	group	elecUp	start
+61	26	group	elecUp	stop
+245/4	26	note	flute	61
+981/16	26	tempo	80.83333333333333
+491/8	26	tempo	81.66666666666667
+983/16	26	tempo	82.5
+123/2	26	note	flute	68
+123/2	26	tempo	83.33333333333333
+985/16	26	tempo	84.16666666666667
+493/8	26	tempo	85.0
+987/16	26	tempo	85.83333333333333
+247/4	26	note	flute	67
+247/4	26	tempo	86.66666666666667
+989/16	26	tempo	87.5
+495/8	26	tempo	88.33333333333333
+991/16	26	tempo	89.16666666666667
+62	26	note	flute	63
+62	26	tempo	90.0
+62	26	note	elecUp	60
+62	26	note	elecUp	61
+62	26	note	elecUp	63
+62	26	note	elecUp	67
+62	26	note	elecUp	68
+62	26	group	elecUp	start
+62	26	group	elecUp	stop
+993/16	26	tempo	90.83333333333333
+497/8	26	note	flute	61
+497/8	26	tempo	91.66666666666667
+995/16	26	tempo	92.5
+249/4	26	note	flute	68
+249/4	26	tempo	93.33333333333333
+997/16	26	tempo	94.16666666666667
+499/8	26	note	flute	67
+499/8	26	tempo	95.0
+999/16	26	tempo	95.83333333333333
+125/2	26	note	flute	73
+125/2	26	tempo	96.66666666666667
+125/2	26	note	elecUp	60
+125/2	26	note	elecUp	61
+125/2	26	note	elecUp	63
+125/2	26	note	elecUp	66
+125/2	26	note	elecUp	67
+125/2	26	group	elecUp	start
+125/2	26	group	elecUp	stop
+1251/20	26	note	flute	72
+1001/16	26	tempo	97.5
+313/5	26	note	flute	75
+501/8	26	tempo	98.33333333333333
+1253/20	26	note	flute	73
+1003/16	26	tempo	99.16666666666667
+627/10	26	note	flute	84
+251/4	26	note	flute	78
+251/4	26	tempo	100.0
+1005/16	26	tempo	100.83333333333333
+503/8	26	tempo	101.66666666666667
+1007/16	26	tempo	102.5
+63	26	tempo	103.33333333333333
+63	26	note	elecUp	60
+63	26	note	elecUp	62
+63	26	note	elecUp	63
+63	26	note	elecUp	66
+63	26	note	elecUp	67
+63	26	group	elecUp	start
+63	26	group	elecUp	stop
+1009/16	26	tempo	104.16666666666667
+505/8	26	tempo	105.0
+1011/16	26	tempo	105.83333333333333
+253/4	26	tempo	106.66666666666667
+1013/16	26	tempo	107.5
+507/8	26	tempo	108.33333333333333
+1015/16	26	tempo	109.16666666666667
+127/2	26	tempo	110.0
+127/2	26	text	cue 27
+1017/16	26	tempo	110.83333333333333
+509/8	26	tempo	111.66666666666667
+1019/16	26	tempo	112.5
+255/4	27	note	flute	77
+255/4	27	tempo	113.33333333333333
+255/4	27	note	elecUp	60
+255/4	27	note	elecUp	64
+255/4	27	note	elecUp	65
+255/4	27	note	elecUp	68
+255/4	27	note	elecUp	71
+255/4	27	group	elecUp	start
+255/4	27	group	elecUp	stop
+1021/16	27	note	flute	76
+1021/16	27	tempo	114.16666666666667
+511/8	27	note	flute	84
+511/8	27	tempo	115.0
+1023/16	27	note	flute	83
+1023/16	27	tempo	115.83333333333333
+64	27	note	flute	88
+64	27	tempo	116.66666666666667
+1537/24	27	note	flute	84
+1025/16	27	tempo	117.5
+769/12	27	note	flute	83
+513/8	27	note	flute	80
+513/8	27	tempo	118.33333333333333
+385/6	27	note	flute	77
+1027/16	27	tempo	119.16666666666667
+1541/24	27	note	flute	76
+257/4	27	tempo	60.0
+129/2	28	tempo	120.0
+129/2	28	note	flute	89
+129/2	28	note	elecUp	60
+129/2	28	note	elecUp	64
+129/2	28	note	elecUp	65
+129/2	28	note	elecUp	68
+129/2	28	note	elecUp	69
+129/2	28	group	elecUp	start
+129/2	28	group	elecUp	stop
+129/2	28	text	cue 28
+2065/32	28	note	flute	88
+1033/16	28	note	flute	93
+2067/32	28	note	flute	92
+517/8	28	note	flute	89
+2069/32	28	note	flute	88
+1035/16	28	note	flute	84
+2071/32	28	note	flute	81
+259/4	28	tempo	60.0
+65	28	note	flute	89
+65	28	tempo	120.0
+65	28	note	elecUp	64
+65	28	note	elecUp	65
+65	28	note	elecUp	68
+65	28	note	elecUp	69
+65	28	note	elecUp	71
+65	28	group	elecUp	start
+65	28	group	elecUp	stop
+2081/32	28	note	flute	88
+1041/16	28	note	flute	93
+2083/32	28	note	flute	92
+521/8	28	note	flute	89
+2085/32	28	note	flute	88
+1043/16	28	note	flute	83
+2087/32	28	note	flute	81
+261/4	28	tempo	60.0
+131/2	29	note	flute	95
+131/2	29	tempo	120.0
+131/2	29	note	elecUp	65
+131/2	29	note	elecUp	66
+131/2	29	note	elecUp	68
+131/2	29	note	elecUp	69
+131/2	29	note	elecUp	71
+131/2	29	group	elecUp	start
+131/2	29	group	elecUp	stop
+1311/20	29	note	flute	93
+328/5	29	note	flute	92
+1313/20	29	note	flute	90
+657/10	29	note	flute	89
+263/4	29	note	flute	95
+329/5	29	note	flute	93
+1317/20	29	note	flute	92
+659/10	29	note	flute	90
+1319/20	29	note	flute	89
+66	29	note	flute	95
+1321/20	29	note	flute	93
+661/10	29	note	flute	92
+1323/20	29	note	flute	90
+331/5	29	note	flute	89
+265/4	30	note	flute	90
+265/4	30	note	elecUp	64
+265/4	30	note	elecUp	66
+265/4	30	note	elecUp	68
+265/4	30	note	elecUp	69
+265/4	30	note	elecUp	71
+265/4	30	group	elecUp	start
+265/4	30	group	elecUp	stop
+265/4	30	text	cue 29
+133/2	30	note	elecUp	64
+133/2	30	note	elecUp	66
+133/2	30	note	elecUp	68
+133/2	30	note	elecUp	70
+133/2	30	note	elecUp	71
+133/2	30	group	elecUp	start
+133/2	30	group	elecUp	stop
+267/4	30	note	elecUp	63
+267/4	30	note	elecUp	66
+267/4	30	note	elecUp	68
+267/4	30	note	elecUp	70
+267/4	30	note	elecUp	71
+267/4	30	group	elecUp	start
+267/4	30	group	elecUp	stop
+67	30	note	elecUp	60
+67	30	note	elecUp	63
+67	30	note	elecUp	66
+67	30	note	elecUp	68
+67	30	note	elecUp	70
+67	30	group	elecUp	start
+67	30	group	elecUp	stop
+269/4	30	note	flute	89
+269/4	30	note	elecUp	60
+269/4	30	note	elecUp	63
+269/4	30	note	elecUp	65
+269/4	30	note	elecUp	68
+269/4	30	note	elecUp	70
+269/4	30	group	elecUp	start
+269/4	30	group	elecUp	stop
+68	31	note	flute	88
+68	31	note	elecUp	60
+68	31	note	elecUp	62
+68	31	note	elecUp	64
+68	31	note	elecUp	66
+68	31	note	elecUp	67
+68	31	group	elecUp	start
+68	31	group	elecUp	stop
+68	31	text	cue 30
+273/4	31	note	elecUp	62
+273/4	31	note	elecUp	64
+273/4	31	note	elecUp	66
+273/4	31	note	elecUp	67
+273/4	31	note	elecUp	71
+273/4	31	group	elecUp	start
+273/4	31	group	elecUp	stop
+137/2	31	note	flute	80
+137/2	31	note	elecUp	62
+137/2	31	note	elecUp	64
+137/2	31	note	elecUp	67
+137/2	31	note	elecUp	68
+137/2	31	note	elecUp	71
+137/2	31	group	elecUp	start
+137/2	31	group	elecUp	stop
+275/4	31	note	elecUp	62
+275/4	31	note	elecUp	64
+275/4	31	note	elecUp	66
+275/4	31	note	elecUp	68
+275/4	31	note	elecUp	71
+275/4	31	group	elecUp	start
+275/4	31	group	elecUp	stop
+69	31	note	flute	76
+69	31	note	elecUp	61
+69	31	note	elecUp	64
+69	31	note	elecUp	66
+69	31	note	elecUp	68
+69	31	note	elecUp	71
+69	31	group	elecUp	start
+69	31	group	elecUp	stop
+367/4	45	text	end
