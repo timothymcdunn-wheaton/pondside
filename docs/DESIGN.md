@@ -871,9 +871,41 @@ broke in two ways the tests would have caught:
   from how they were drawn. The daemon now starts with `-dbackend=svg`, and
   its pages are byte-identical to a cold compile's (links aside).
 
-**To do:** add LilyPond 2.26 to the CI matrix, next to 2.24.
+**Done:** CI has a `linux-lilypond-2-26` job (official 2.26.0 tarball), next to 2.24.
 
 **Measured** on a real 5-page score: the warm and cold compiles both take
 about 10 s, because engraving dominates. The startup saving matters only
 for small scores. Perceived speed on large scores depends on the
 provisional noteheads.
+
+### Instant edits on large scores (plan change, 2026-10-28)
+
+Tim's feedback: 10 s per edit is far too slow; edits must feel instant.
+Two parts, since no LilyPond compile will ever take 0 s:
+
+1. **Most of the 10 s was the SVG backend, not engraving.** On a 12-page
+   generated score (2.24.3): null backend 2.9 s, PDF 4.9 s, SVG 17.5 s.
+   `output-svg.scm` finds every glyph with a regular expression over the
+   whole SVG font, copying the font's text each time. `SessionSettings.fastSVG`
+   replaces its `cache-font` with a per-font table built in one linear scan,
+   plus a memo of named glyphs: **18.2 s → 5.0 s, all 12 pages
+   byte-identical** (`testFastSVGIsByteIdentical` pins this on each CI
+   LilyPond). It installs only when the procedures it needs exist, checks
+   its first answers against the original and turns itself off on any
+   difference or error, so a LilyPond whose `output-svg.scm` changed gets
+   the stock speed, never wrong output. Both cold and daemon compiles use it.
+   - Departure: `-dsvg-woff` (glyphs as font text) looked faster but
+     crashes on 2.24.3 (`ly:paper-get-font: Wrong type argument`) and
+     leaves pages incomplete. Dropped.
+2. **The screen answers before LilyPond does.** Insert, move, delete and
+   duration changes draw provisional marks at once (a ghost notehead, a
+   strike-through, a duration badge) that the next engraving replaces.
+
+Still to do for big scores (M4 proper): recompile only the systems an edit
+touches, and engrave the visible pages first.
+
+Also from that feedback: pages drew in the wrong places after zooming
+until hovered (a page view now redraws when it is resized); note keys
+went to the text editor when the source had focus (clicking the score now
+gives it focus, the focused pane gets an accent border, and the status bar
+says where keys go).

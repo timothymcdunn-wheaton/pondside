@@ -71,7 +71,7 @@ final class MultiFileTests: XCTestCase {
 
         let result = try await LilyPondEngraver(installation: lily).engrave(root, purpose: .canvas, outputDirectory: dir)
         XCTAssertTrue(result.succeeded, result.log)
-        let page = EngravedPage(svg: try Data(contentsOf: result.outputFiles[0]))
+        let page = try XCTUnwrap(result.pages().first)
         let linkedFiles = Set(page.graphics.compactMap { $0.link.map { URL(fileURLWithPath: $0.path).lastPathComponent } })
         XCTAssertEqual(linkedFiles, ["flute.ily"])
         XCTAssertGreaterThanOrEqual(page.graphics.filter { $0.link != nil }.count, 8)

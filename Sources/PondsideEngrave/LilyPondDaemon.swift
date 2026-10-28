@@ -101,7 +101,7 @@ public actor LilyPondDaemon {
         try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
         let base = outputDirectory.appendingPathComponent(source.deletingPathExtension().lastPathComponent)
         let settings = outputDirectory.appendingPathComponent("pondside-session.ily")
-        let text = SessionSettings.canvas + extraSettings
+        let text = SessionSettings.canvas + SessionSettings.fastSVG + extraSettings
             + "\\paper { output-filename = \(Self.schemeString(base.path)) }\n"
         try Data(text.utf8).write(to: settings)
 

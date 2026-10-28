@@ -164,7 +164,7 @@ final class LilyPondIntegrationTests: XCTestCase {
         let result = try await engraver.engrave(source, purpose: .canvas, outputDirectory: dir.appendingPathComponent("out"))
         XCTAssertTrue(result.succeeded, result.log)
         XCTAssertTrue(result.errors.isEmpty, result.log)
-        let page = EngravedPage(svg: try Data(contentsOf: result.outputFiles[0]))
+        let page = try XCTUnwrap(result.pages().first)
 
         // Every note maps back to the token that produced it.
         let sourceText = SourceText(text)
@@ -173,6 +173,30 @@ final class LilyPondIntegrationTests: XCTestCase {
             return String(text[LilyLexing.tokenRange(in: text, at: i)])
         })
         XCTAssertTrue(tokens.isSuperset(of: ["c'4", "d'4", "e'2"]), "\(tokens)")
+    }
+
+    /// The fast SVG patch must change nothing but speed.
+    func testFastSVGIsByteIdentical() async throws {
+        let engraver = try await engraver()
+        let dir = try scratch()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let source = dir.appendingPathComponent("score.ly")
+        try "\\version \"2.24.0\"\n\\header { title = \"Fast\" }\n{ \\time 3/4 c'4\\p( d'8 e' f'4) | g'2.\\fermata }\n\\addlyrics { la la la la }\n"
+            .write(to: source, atomically: true, encoding: .utf8)
+        func compile(_ name: String, _ settings: String) async throws -> Data {
+            let out = dir.appendingPathComponent(name)
+            try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+            let file = out.appendingPathComponent("settings.ily")
+            try Data(settings.utf8).write(to: file)
+            let base = out.appendingPathComponent("score")
+            let run = try await ProcessRunner.run(engraver.installation.executable,
+                LilyPondEngraver.arguments(for: .canvas, source: source, outputBase: base, sessionSettings: file))
+            XCTAssertEqual(run.status, 0, run.stderrString)
+            return try Data(contentsOf: base.appendingPathExtension("svg"))
+        }
+        let stock = try await compile("stock", SessionSettings.canvas)
+        let fast = try await compile("fast", SessionSettings.canvas + SessionSettings.fastSVG)
+        XCTAssertEqual(stock, fast)
     }
 
     func testPDFExportHasNoLocalPaths() async throws {

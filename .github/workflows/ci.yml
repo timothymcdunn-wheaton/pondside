@@ -45,6 +45,32 @@ jobs:
           echo "last test started:"; grep -E "Test Case .* started" test.log | tail -1 || true
           exit $status
 
+  # The same suite against LilyPond 2.26 (Homebrew's version), where the
+  # daemon, settings and SVG output differ from 2.24 (DESIGN.md, M4).
+  linux-lilypond-2-26:
+    runs-on: ubuntu-24.04
+    container: swift:6.1-noble
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install LilyPond 2.26.0 (official build)
+        run: |
+          apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl > /dev/null
+          curl -sSfL "https://gitlab.com/lilypond/lilypond/-/releases/v2.26.0/downloads/lilypond-2.26.0-linux-x86_64.tar.gz" | tar xz -C /opt
+          ln -s /opt/lilypond-2.26.0/bin/lilypond /usr/local/bin/lilypond
+          lilypond --version | head -1
+          ls /opt/lilypond-2.26.0/share/lilypond/2.26.0/fonts/ || true
+      - name: Build
+        run: swift build --build-tests
+      - name: Test
+        shell: bash
+        run: |
+          set -o pipefail
+          status=0
+          swift test --skip-build 2>&1 | tee test.log > /dev/null || status=$?
+          echo "──────── summary ────────"
+          grep -E "error:|Fatal error|fatal error|Crash|crashed|skipped|Pondside benchmark|Executed .* tests" test.log | head -150 || true
+          exit $status
+
   macos:
     runs-on: macos-15
     steps:

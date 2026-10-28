@@ -344,7 +344,7 @@ final class ScoreDocument {
         defer { try? FileManager.default.removeItem(at: out) }
         do {
             let result = try await engraver.engrave(source, purpose: .canvas, outputDirectory: out)
-            let pages = result.outputFiles.compactMap { try? Data(contentsOf: $0) }.map { EngravedPage(svg: $0) }
+            let pages = result.pages()
             return Outcome(result: result, pages: pages, error: nil)
         } catch {
             return Outcome(result: nil, pages: [], error: String(describing: error))

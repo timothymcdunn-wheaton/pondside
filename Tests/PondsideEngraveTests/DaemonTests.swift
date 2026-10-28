@@ -24,9 +24,7 @@ final class DaemonTests: XCTestCase {
     }
 
     func links(_ result: EngraveResult) throws -> Int {
-        try result.outputFiles.reduce(0) { n, f in
-            n + EngravedPage(svg: try Data(contentsOf: f)).graphics.filter { $0.link != nil }.count
-        }
+        result.pages().reduce(0) { n, page in n + page.graphics.filter { $0.link != nil }.count }
     }
 
     func testWarmCompilesMatchColdOnesAndAreFaster() async throws {

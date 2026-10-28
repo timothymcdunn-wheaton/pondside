@@ -140,6 +140,16 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     private func wire() {
         canvas.delegate = self
         canvas.onZoomChange = { [weak self] _ in self?.updateStatus() }
+        // Show where keys go: a focus ring on the score (the one place glow
+        // is allowed) and a word in the status line.
+        canvasScroll.wantsLayer = true
+        canvas.onFocusChange = { [weak self] focused in
+            guard let self else { return }
+            self.canvasScroll.layer?.borderWidth = focused ? 2 : 0
+            self.canvasScroll.layer?.borderColor = Theme.accent.withAlphaComponent(0.7).cgColor
+            self.statusBar.setKeyTarget(focused ? "score" : "source")
+            self.updateHints()
+        }
         editor.onUserEdit = { [weak self] text in
             guard let self else { return }
             self.score.userEdited(self.activeFile, text: text)
@@ -370,7 +380,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
         let (events, notes) = targets()
         switch action {
         case .move(let move):
-            let moved = highlighted
+            let moved = events.allSatisfy { isEngraved($0) } ? highlighted : []
             let edit = scoreEditor.move(events: events, extraNotes: notes, by: move)
             apply(edit)
             // Instant feedback: a ghost at the new staff position until
@@ -383,17 +393,20 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
                 }
             }
         case .setDuration(let d):
-            if !events.isEmpty { apply(scoreEditor.setDuration(events: events, to: d)) }
+            if !events.isEmpty { applyShowingDuration(scoreEditor.setDuration(events: events, to: d)) }
             updateInputStatus()
         case .toggleDot:
-            if !events.isEmpty { apply(scoreEditor.toggleDot(events: events)) }
+            if !events.isEmpty { applyShowingDuration(scoreEditor.toggleDot(events: events)) }
             updateInputStatus()
         case .insertNote(let step):
             insert(step: step)
         case .insertRest:
             insert(step: nil)
         case .delete:
-            apply(scoreEditor.delete(events: events))
+            let gone = events.allSatisfy { isEngraved($0) } ? highlighted : []
+            let edit = scoreEditor.delete(events: events)
+            apply(edit)
+            if edit != nil { canvas.provisionalStrike(gone, path: activeFile.url.path) }
         case .togglePostEvent(let text):
             let eligible = events.filter { tree.events[$0].acceptsNoteEntry }
             apply(scoreEditor.togglePostEvent(text, events: eligible))
@@ -426,7 +439,36 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
             NSSound.beep()
             return
         }
-        apply(ScoreEditor(tree).insert(step: step, after: anchor, duration: noteInput.armedDuration))
+        // Only an anchor the canvas already shows can place the ghost; a note
+        // inserted since the last engraving chains from the previous ghost.
+        let engraved = isEngraved(anchor)
+        let anchorPositions = engraved ? highlighted : []
+        let anchorDiatonic = engraved ? tree.events[anchor].notes.first.map { tree.notes[$0].absolute.diatonicIndex } : nil
+        let edit = ScoreEditor(tree).insert(step: step, after: anchor, duration: noteInput.armedDuration)
+        apply(edit)
+        // Instant feedback while LilyPond engraves: a ghost of the new note.
+        if edit != nil, step != nil, let e = targets().events.first, let n = tree.events[e].notes.first {
+            canvas.provisionalInsert(after: anchorPositions, path: activeFile.url.path,
+                                     anchorDiatonic: anchorDiatonic, diatonic: tree.notes[n].absolute.diatonicIndex)
+        }
+    }
+
+    /// Whether the event already existed at the last engraving (its start
+    /// maps exactly), so the glyphs at its position on the canvas are its
+    /// own. A note inserted since starts inside the changed span: it isn't.
+    private func isEngraved(_ event: Int) -> Bool {
+        guard let map = engraving else { return false }
+        let start = OffsetConversion.utf16(fromUTF8: tree.events[event].range.lowerBound, in: editor.text)
+        return map.currentOffset(forEngraved: map.engravedOffset(forCurrent: start)) == start
+    }
+
+    /// Applies a duration change and badges the notes with their new value
+    /// until the engraving shows it.
+    private func applyShowingDuration(_ edit: ScoreEdit?) {
+        let changed = targets().events.allSatisfy { isEngraved($0) } ? highlighted : []
+        apply(edit)
+        guard edit != nil, let e = targets().events.first else { return }
+        canvas.provisionalBadge(changed, path: activeFile.url.path, text: tree.events[e].effectiveDuration.text)
     }
 
     private func moveSelection(by step: Int, extend: Bool) {
@@ -492,6 +534,9 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
             hints = ["Click a note to select it", "←→ walk the score", "⌘J switch pane"]
         }
         if noteInput.armedDuration != nil { hints.insert("Click a staff to place a note", at: 0) }
+        if hasSelection, window?.firstResponder !== canvas {
+            hints.insert("Keys type text here: click the score (or ⌘J) for note keys", at: 0)
+        }
         if case .errors = score.status { hints.insert("Errors are underlined in the source", at: 0) }
         statusBar.setHints(Array(hints.prefix(3)))
     }
@@ -597,6 +642,9 @@ extension DocumentWindowController: ScoreCanvasDelegate {
             range = min(current.lowerBound, range.lowerBound)..<max(current.upperBound, range.upperBound)
         }
         setSelection(utf8: range)
+        // A click in the score means the next keys are score keys (a–g, 8,
+        // ↑…), never text: make sure nothing on the way took the keyboard.
+        window?.makeFirstResponder(canvas)
     }
 
     func canvasClickedUnlinkedMusic(_ canvas: ScoreCanvasView) {
@@ -618,10 +666,18 @@ extension DocumentWindowController: ScoreCanvasDelegate {
         guard !events.isEmpty else { return }
         // A rectangle selects the contiguous source span it covers.
         selectEvents(Array(events))
+        window?.makeFirstResponder(canvas)
     }
 
     func canvas(_ canvas: ScoreCanvasView, handleKey event: NSEvent) -> Bool {
         handleScoreKey(event)
+    }
+
+    func canvas(_ canvas: ScoreCanvasView, missedStaffWith stavesOnPage: Int) {
+        statusBar.flash(stavesOnPage == 0
+            ? "Mouse entry found no five-line staves on this page, so it can't place notes here (⎋ disarms)"
+            : "Click on a staff, or just above or below it, to place a note (⎋ disarms)")
+        NSSound.beep()
     }
 
     func canvasWantsMouseEntry(_ canvas: ScoreCanvasView) -> Bool {

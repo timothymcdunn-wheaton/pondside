@@ -16,6 +16,9 @@ protocol ScoreCanvasDelegate: AnyObject {
     func canvasWantsMouseEntry(_ canvas: ScoreCanvasView) -> Bool
     /// A click on empty staff space while mouse entry is wanted.
     func canvas(_ canvas: ScoreCanvasView, clickedStaff staff: Staff, at point: Point, on page: EngravedPage)
+    /// Mouse entry was wanted but the click found no staff; `stavesOnPage`
+    /// is how many staves the page has (0: none could be recognised).
+    func canvas(_ canvas: ScoreCanvasView, missedStaffWith stavesOnPage: Int)
 }
 
 /// The score surface: pages floating on the dark field.
@@ -43,6 +46,22 @@ final class ScoreCanvasView: NSView {
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
 
+    /// Called when the canvas gains or loses the keyboard, so the window can
+    /// show where keys go.
+    var onFocusChange: ((Bool) -> Void)?
+
+    override func becomeFirstResponder() -> Bool {
+        let ok = super.becomeFirstResponder()
+        if ok { onFocusChange?(true) }
+        return ok
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let ok = super.resignFirstResponder()
+        if ok { onFocusChange?(false) }
+        return ok
+    }
+
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
@@ -55,6 +74,7 @@ final class ScoreCanvasView: NSView {
 
     /// Replaces the pages, cross-fading so a recompile never flickers.
     func setPages(_ newPages: [EngravedPage]) {
+        lastInserted = nil
         let rendered = newPages.map(RenderedPage.init)
         let animate = !pages.isEmpty
         pages = rendered
@@ -156,8 +176,11 @@ final class ScoreCanvasView: NSView {
         window?.makeFirstResponder(self)
         let tolerance = 0.3 / max(zoom, 0.5)
         let link = v.rendered?.page.hitTest(p, tolerance: tolerance)?.link
-        if link == nil, let page = v.rendered?.page, delegate?.canvasWantsMouseEntry(self) == true,
-           let staff = page.staff(at: p, among: v.staves) {
+        if link == nil, let page = v.rendered?.page, delegate?.canvasWantsMouseEntry(self) == true {
+            guard let staff = page.staff(at: p, among: v.staves) else {
+                delegate?.canvas(self, missedStaffWith: v.staves.count)
+                return
+            }
             v.ghost = nil
             delegate?.canvas(self, clickedStaff: staff, at: p, on: page)
             return
@@ -207,6 +230,65 @@ final class ScoreCanvasView: NSView {
                 ghosts.append(r)
             }
             v.provisional = ghosts
+        }
+    }
+
+    /// The graphics linked to `positions` in `path`, per page view.
+    private func linked(_ positions: Set<SourcePosition>, path: String) -> [(PageView, [SourcePosition: [Graphic]])] {
+        pageViews.compactMap { v in
+            guard let page = v.rendered?.page else { return nil }
+            var byPosition: [SourcePosition: [Graphic]] = [:]
+            for g in page.graphics {
+                guard let link = g.link, positions.contains(link.position), PathMatching.same(link.path, path) else { continue }
+                byPosition[link.position, default: []].append(g)
+            }
+            return byPosition.isEmpty ? nil : (v, byPosition)
+        }
+    }
+
+    /// The last provisional note placed, so several quick insertions chain
+    /// to the right of each other before LilyPond answers.
+    private var lastInserted: (view: PageView, head: Rect, space: Double, diatonic: Int)?
+
+    /// Provisional rendering of an insertion: a ghost notehead after the
+    /// anchor's notehead, at the new pitch's staff position.
+    func provisionalInsert(after positions: Set<SourcePosition>, path: String, anchorDiatonic: Int?, diatonic: Int) {
+        var base: (view: PageView, head: Rect, space: Double, diatonic: Int)?
+        if let anchorDiatonic {
+            for (v, byPosition) in linked(positions, path: path) {
+                guard let page = v.rendered?.page else { continue }
+                for (_, graphics) in byPosition {
+                    guard let first = graphics.first,
+                          let staff = page.staff(at: Point(first.bounds.midX, first.bounds.midY), among: v.staves),
+                          let head = EngravedPage.notehead(among: graphics, space: staff.space) else { continue }
+                    if base == nil || head.bounds.maxX > base!.head.maxX { base = (v, head.bounds, staff.space, anchorDiatonic) }
+                }
+            }
+        }
+        if base == nil { base = lastInserted }
+        guard let b = base else { return }
+        var r = b.head
+        r.x = b.head.maxX + b.space * 0.8
+        r.y -= Double(diatonic - b.diatonic) * b.space / 2
+        b.view.provisional.append(r)
+        lastInserted = (b.view, r, b.space, diatonic)
+    }
+
+    /// Provisional rendering of a deletion: the glyphs struck through.
+    func provisionalStrike(_ positions: Set<SourcePosition>, path: String) {
+        for (v, byPosition) in linked(positions, path: path) {
+            v.strikes += byPosition.values.compactMap { EngravedPage.bounds(of: $0) }
+        }
+    }
+
+    /// Provisional rendering of a duration change: the new value as a badge.
+    func provisionalBadge(_ positions: Set<SourcePosition>, path: String, text: String) {
+        for (v, byPosition) in linked(positions, path: path) {
+            for (_, graphics) in byPosition {
+                guard let r = EngravedPage.bounds(of: graphics) else { continue }
+                v.badges.removeAll { abs($0.0.midX - r.midX) < 0.3 }
+                v.badges.append((r, text))
+            }
         }
     }
 
@@ -264,6 +346,8 @@ private final class PageView: NSView {
             staves = rendered?.page.staves ?? []
             ghost = nil
             provisional = []
+            strikes = []
+            badges = []
             needsDisplay = true
         }
     }
@@ -271,6 +355,8 @@ private final class PageView: NSView {
     var ghost: Ghost? { didSet { if ghost != oldValue { needsDisplay = true } } }
     /// Notehead rectangles of provisional (not yet engraved) positions.
     var provisional: [Rect] = [] { didSet { if provisional != oldValue { needsDisplay = true } } }
+    var strikes: [Rect] = [] { didSet { needsDisplay = true } }
+    var badges: [(Rect, String)] = [] { didSet { needsDisplay = true } }
     var highlights: [Rect] = [] { didSet { if highlights != oldValue { needsDisplay = true } } }
     var lightsOut = false { didSet { needsDisplay = true } }
     private var dragStart: NSPoint?
@@ -292,6 +378,14 @@ private final class PageView: NSView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
+
+    /// A zoom changes the page's size: redraw at the new size rather than
+    /// leaving the layer to stretch (or misplace) the old drawing.
+    override func setFrameSize(_ newSize: NSSize) {
+        let changed = newSize != frame.size
+        super.setFrameSize(newSize)
+        if changed { needsDisplay = true }
+    }
 
     func crossFade() {
         let fade = CATransition()
@@ -354,6 +448,31 @@ private final class PageView: NSView {
         for r in provisional {
             ctx.setFillColor(accent.withAlphaComponent(0.55).cgColor)
             ctx.fillEllipse(in: viewRect(for: r).insetBy(dx: 0.5, dy: 1))
+        }
+        // Overlays only: the engraved music underneath is untouched.
+        ctx.setStrokeColor(accent.withAlphaComponent(0.85).cgColor)
+        ctx.setLineWidth(1.5)
+        for r in strikes {
+            let v = viewRect(for: r).insetBy(dx: -2, dy: -2)
+            ctx.move(to: CGPoint(x: v.minX, y: v.minY)); ctx.addLine(to: CGPoint(x: v.maxX, y: v.maxY))
+            ctx.move(to: CGPoint(x: v.minX, y: v.maxY)); ctx.addLine(to: CGPoint(x: v.maxX, y: v.minY))
+        }
+        ctx.strokePath()
+        for (r, text) in badges {
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.monospacedSystemFont(ofSize: Theme.secondarySize, weight: .semibold),
+                .foregroundColor: NSColor.white,
+            ]
+            let label = NSAttributedString(string: text, attributes: attrs)
+            let size = label.size()
+            let v = viewRect(for: r)
+            let badge = NSRect(x: v.midX - size.width / 2 - 4, y: v.minY - size.height - 6, width: size.width + 8, height: size.height + 2)
+            ctx.setFillColor(accent.withAlphaComponent(0.9).cgColor)
+            ctx.addPath(CGPath(roundedRect: badge, cornerWidth: 4, cornerHeight: 4, transform: nil))
+            ctx.fillPath()
+            NSGraphicsContext.saveGraphicsState()
+            label.draw(at: NSPoint(x: badge.minX + 4, y: badge.minY + 1))
+            NSGraphicsContext.restoreGraphicsState()
         }
 
         if let dragRect {

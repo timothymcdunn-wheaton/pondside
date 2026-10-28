@@ -69,7 +69,7 @@ final class MouseEntryTests: XCTestCase {
         try source.write(to: file, atomically: true, encoding: .utf8)
         let result = try await LilyPondEngraver(installation: lily).engrave(file, purpose: .canvas, outputDirectory: dir)
         XCTAssertTrue(result.succeeded, result.log)
-        let page = EngravedPage(svg: try Data(contentsOf: result.outputFiles[0]))
+        let page = try XCTUnwrap(result.pages().first)
 
         let staves = page.staves
         XCTAssertEqual(staves.count, 2)

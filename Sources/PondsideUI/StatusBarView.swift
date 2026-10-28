@@ -100,8 +100,20 @@ final class StatusBarView: NSView {
         renderRight()
     }
 
+    private var keyTarget = ""
+
+    /// Where typed keys go: "score" (note entry) or "source" (text).
+    func setKeyTarget(_ target: String) {
+        keyTarget = target
+        renderRight()
+    }
+
     private func renderRight() {
-        rightLabel.stringValue = inputText.isEmpty ? rightText : inputText + "      " + rightText
+        var parts = [String]()
+        if !keyTarget.isEmpty { parts.append("Keys → \(keyTarget)") }
+        if !inputText.isEmpty { parts.append(inputText) }
+        parts.append(rightText)
+        rightLabel.stringValue = parts.joined(separator: "      ")
     }
 
     private var hints: [String] = []
