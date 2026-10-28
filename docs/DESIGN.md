@@ -850,3 +850,30 @@ timing that the cue engine understands:
 | M7 Lexicon | storage, tiers, validation, expansion, checking, six core entries: done; browser, promotion, previews, lock not started |
 | M8 time and sound | timing engine, cues.json, handler sync, quark, Cue Inspector, mockup render: done; quark and mockup untested against a real SuperCollider and MuseScore |
 | M9 graphic notation | groundwork (entries above) |
+
+### LilyPond 2.26 and the warm daemon (found on macOS, fixed in `LilyPondDaemon`)
+
+CI only runs LilyPond 2.24.3. On 2.26.0 (the Homebrew version) the daemon
+broke in two ways the tests would have caught:
+
+- **`include-settings` is an append-only list** in 2.26. `ly:set-option`
+  refuses it with a warning, so the job's settings were never read. Output
+  then went to the score's own folder, the app found no pages, and the
+  status read "LilyPond exited with status 0". Fix: a fixed dispatcher file
+  is registered once at start, and it includes the file the loop names in
+  `pondside-job-settings`. Also, a job that reports success but leaves no
+  pages in its folder now counts as a daemon failure, so the engraver falls
+  back to a cold compile.
+- **The backend has to be set at start.** LilyPond reads it once while
+  initialising: `music-strings-to-paths` (glyphs as paths, not text) and the
+  default text fonts in `paper-defaults-init.ly` both depend on it. Setting
+  it per job gave dynamics in a text font and fonts laid out differently
+  from how they were drawn. The daemon now starts with `-dbackend=svg`, and
+  its pages are byte-identical to a cold compile's (links aside).
+
+**To do:** add LilyPond 2.26 to the CI matrix, next to 2.24.
+
+**Measured** on a real 5-page score: the warm and cold compiles both take
+about 10 s, because engraving dominates. The startup saving matters only
+for small scores. Perceived speed on large scores depends on the
+provisional noteheads.

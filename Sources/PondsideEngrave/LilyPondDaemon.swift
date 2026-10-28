@@ -28,6 +28,7 @@ public actor LilyPondDaemon {
     private var pipe: DaemonPipe?
     private var jobs = 0
     private var scriptURL: URL?
+    private var dispatcherURL: URL?
 
     public init(installation: LilyPondInstallation) {
         self.installation = installation
@@ -35,13 +36,28 @@ public actor LilyPondDaemon {
 
     static let marker = "PONDSIDE-DONE "
 
+    /// Included by every job through `include-settings`, it includes that
+    /// job's own settings file. In 2.26 the option is an append-only list
+    /// that `ly:set-option` refuses to change, so it is registered once, at
+    /// start, and the loop names each job's file in `pondside-job-settings`.
+    static let dispatcher = """
+    #(ly:parser-include-string (format #f "\\\\include \\\"~a\\\"" (module-ref (resolve-module '(lily)) 'pondside-job-settings)))
+
+    """
+
     /// The loop LilyPond runs. Requests are `<source>\t<settings file>\n`.
+    /// It expects `pondside-dispatcher` to name a file holding `dispatcher`.
     static let script = """
     (use-modules (ice-9 rdelim))
     ; One ordered stream: a score's own output stays with its job.
     (set-current-output-port (current-error-port))
     (ly:reset-all-fonts)
     (ly:parse-init "declarations-init.ly")
+    ; 2.24: a string option; 2.26: an accumulative list.
+    (if (list? (ly:get-option 'include-settings))
+        (ly:append-to-option 'include-settings pondside-dispatcher)
+        (ly:set-option 'include-settings pondside-dispatcher))
+    (define pondside-job-settings #f)
     (display "\\nPONDSIDE-DONE ready\\n" (current-error-port))
     (force-output (current-error-port))
     (let loop ()
@@ -51,11 +67,11 @@ public actor LilyPondDaemon {
                (file (car parts))
                (settings (cadr parts))
                (failed #f)
-               (saved (ly:all-options)))
+               (saved (filter (lambda (s) (not (eq? (car s) 'include-settings))) (ly:all-options))))
           (chdir (dirname file))
           (ly:set-option 'backend 'svg)
           (ly:set-option 'point-and-click #t)
-          (ly:set-option 'include-settings settings)
+          (set! pondside-job-settings settings)
           (catch 'ly-file-failed
                  (lambda () (ly:parse-file file))
                  (lambda (key . args) (set! failed #t)))
@@ -100,6 +116,12 @@ public actor LilyPondDaemon {
             throw Died(log: outcome?.log ?? "no answer within \(timeout)")
         }
         let files = LilyPondEngraver.outputFiles(in: outputDirectory, base: base.lastPathComponent, extension: "svg")
+        // Success with no pages means the job's settings were never read, so
+        // output went elsewhere. Let the engraver fall back to a cold compile.
+        if outcome.status == "ok" && files.isEmpty {
+            stop()
+            throw Died(log: "no pages in the job's folder\n" + outcome.log)
+        }
         return EngraveResult(outputFiles: files, diagnostics: DiagnosticParser.parse(outcome.log), log: outcome.log,
                              exitStatus: outcome.status == "ok" ? 0 : 1, duration: duration)
     }
@@ -117,15 +139,26 @@ public actor LilyPondDaemon {
     private func restart() async throws {
         stop()
         if scriptURL == nil {
-            let url = FileManager.default.temporaryDirectory.appendingPathComponent("pondside-daemon-\(UUID().uuidString).scm")
+            let tmp = FileManager.default.temporaryDirectory
+            let id = UUID().uuidString
+            let url = tmp.appendingPathComponent("pondside-daemon-\(id).scm")
             try Data(Self.script.utf8).write(to: url)
+            let dispatcher = tmp.appendingPathComponent("pondside-daemon-\(id).ily")
+            try Data(Self.dispatcher.utf8).write(to: dispatcher)
             scriptURL = url
+            dispatcherURL = dispatcher
         }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: installation.executable)
-        let expr = "(begin (set-current-module (resolve-module '(lily))) (load \(Self.schemeString(scriptURL!.path))))"
-        // The file argument is never read: the loop never returns.
-        p.arguments = ["-e", expr, "pondside-daemon.ly"]
+        let expr = "(begin (set-current-module (resolve-module '(lily)))"
+            + " (define pondside-dispatcher \(Self.schemeString(dispatcherURL!.path)))"
+            + " (load \(Self.schemeString(scriptURL!.path))))"
+        // The file argument is never read: the loop never returns. The
+        // backend is set at start because LilyPond reads it once while
+        // initialising: music-strings-to-paths (glyphs as paths, not text)
+        // and the default text fonts in paper-defaults-init.ly both depend
+        // on it, and setting it per job comes too late for either.
+        p.arguments = ["-dbackend=svg", "-e", expr, "pondside-daemon.ly"]
         p.currentDirectoryURL = FileManager.default.temporaryDirectory
         let inPipe = Pipe(), outPipe = Pipe(), errPipe = Pipe()
         p.standardInput = inPipe

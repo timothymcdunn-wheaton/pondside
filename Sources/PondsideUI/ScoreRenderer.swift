@@ -132,10 +132,16 @@ final class RenderedPage {
 enum FontResolver {
     private static var cache: [String: NSFont] = [:]
 
+    private static let serif = ["C059", "TeX Gyre Schola", "Century Schoolbook", "New Century Schoolbook", "Times New Roman", "Times"]
+    private static let sans = ["Nimbus Sans", "TeX Gyre Heros", "Helvetica Neue", "Helvetica"]
+    private static let mono = ["Nimbus Mono PS", "TeX Gyre Cursor", "Courier New", "Menlo"]
+
+    /// SVG compiles name the generic families (2.26 writes "sans", not
+    /// "sans-serif"); LilyPond's own names are kept for other paths.
     static let families: [String: [String]] = [
-        "serif": ["C059", "TeX Gyre Schola", "Century Schoolbook", "New Century Schoolbook", "Times New Roman", "Times"],
-        "sans-serif": ["Nimbus Sans", "TeX Gyre Heros", "Helvetica Neue", "Helvetica"],
-        "monospace": ["Nimbus Mono PS", "TeX Gyre Cursor", "Courier New", "Menlo"],
+        "serif": serif, "LilyPond Serif": serif,
+        "sans": sans, "sans-serif": sans, "LilyPond Sans Serif": sans,
+        "monospace": mono, "LilyPond Monospace": mono,
     ]
 
     static func font(family: String, size: Double, bold: Bool, italic: Bool) -> NSFont {
