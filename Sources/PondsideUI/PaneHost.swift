@@ -121,7 +121,6 @@ final class PanePlaceholder: NSView {
         case .supercollider, .python: when = "Arrives with the editor milestone (M5): LSP-backed editing."
         case .agent: when = "Arrives with programmability (M6). Meanwhile any agent can edit the .ly files directly."
         case .lexicon: when = "Arrives with the Lexicon (M7)."
-        case .osc: when = "Arrives with the optional live link to SuperCollider (M8)."
         default: when = ""
         }
         let title = NSTextField(labelWithString: content.title)

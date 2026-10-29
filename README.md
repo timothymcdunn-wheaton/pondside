@@ -13,11 +13,10 @@ The full plan, the schemas, and the parts of the brief I'd change are in
 
 ## Status
 
-**Done:** M1 (the loop), M2 (editing), M2.1 (multi-file scores) and mouse entry.
-**In, with first parts of later milestones:** M3 (the interface), M4 (a warm LilyPond daemon), M6 (CLI, MCP server),
-M7 (the Lexicon) and M8 (the timing engine, cue sheets, SuperCollider handlers and quark). CI builds and tests
-everything on Linux and macOS. The app's UI compiles in CI, but mouse entry and the M3 interface (chords, palette,
-panes, terminal) have not been tried by hand yet. See `docs/DESIGN.md` §7 for what each milestone still lacks.
+Editing, multi-file scores, the interface, instant feedback (warm daemon, provisional marks, the Notation Lens,
+the render cache), Engraving Settings, cue timing for SuperCollider, the CLI, MCP server and socket, and the
+Lexicon with its graphics kit and agent workflow are built. CI builds and tests everything on Linux and macOS.
+`docs/DESIGN.md` §9 lists what remains.
 
 - **Open and engrave.** Open a `.ly` file. It is engraved by the LilyPond
   you already have, detected on `PATH`, Homebrew, MacPorts or
@@ -36,9 +35,11 @@ panes, terminal) have not been tried by hand yet. See `docs/DESIGN.md` §7 for w
 - **Never lose work.** Edits autosave after 250 ms and re-engrave. If
   another tool writes a file, the change is merged as a minimal diff so
   your caret stays put.
-- **Mouse entry.** Arm a duration (type `8` with nothing selected), then
-  click a staff: a ghost notehead shows where the note will go. The clef is
-  read from the notes already on that staff.
+- **Instant Notation Lens.** The first keyboard edit opens a temporary,
+  blurred overlay with a continuously scrolling staff strip around the
+  cursor, engraved immediately from an in-memory MusicXML window. LilyPond
+  still renders the authoritative page behind it; the lens closes when that
+  render lands. Escape closes only the lens.
 - **Two keys to everything.** Press Space in the score (⌥Space anywhere)
   and the hint bar lists what can follow: `g` go, `a` add, `e` edit, `v`
   view, `p` pane, `w` workspace, `f` file, `h` help. `␣ a s` slurs the
@@ -88,7 +89,7 @@ Keys are LilyPond wherever LilyPond has an answer.
 | `\trill` `⏎` | any post-event command, typed as in LilyPond |
 | `⌫` | delete |
 | `⎋` | cancel / deselect / disarm |
-| click a staff | with a duration armed: place a note there |
+| `⌘L` / `Space v y` | open the Notation Lens around the selection |
 | `Space` | leader: chords such as `␣ a s` (slur), `␣ g e` (next error), `␣ g c` (go to cue), `␣ ␣` (palette) |
 | `⏎` | edit in source |
 | `⌘J` | switch between score and source |
@@ -103,7 +104,7 @@ The portable modules and the CLI also build on Linux.
 swift build                      # everything (the app only on macOS)
 swift test                       # integration tests run if LilyPond is installed
 scripts/make-app.sh              # → .build/Pondside.app
-open .build/Pondside.app --args path/to/score.ly
+open .build/Pondside.app --args "$PWD/path/to/score.ly"   # open runs the app from /
 ```
 
 ## CLI
@@ -128,7 +129,9 @@ Everything the CLI and MCP server offer is documented in [docs/API.md](docs/API.
 |---|---|---|
 | `PondsideCore` | portable, stdlib only | lossless LilyPond CST, music model (pitches, durations, relative octaves), minimal-diff score editor, note input |
 | `PondsideEngrave` | portable | toolchain detection, LilyPond driver, include graph, SVG scene, diagnostics, watcher, event oracle |
-| `PondsideTiming` / `Lexicon` / `Bridge` | portable | placeholders for M6 to M8, already under the seam |
+| `PondsideTiming` | portable | timing dump → stepped tempo map → cue times (cues.json), `.scd` handler sync |
+| `PondsideLexicon` | portable | Lexicon entries and scopes, the graphics kit, skills, `pondside.toml` |
+| `PondsideBridge` | portable | MCP server, app socket, score context, graphic edits |
 | `PondsideCLI` | portable | `pondside` |
 | `PondsideUI`, `PondsideApp` | macOS | AppKit front end |
 

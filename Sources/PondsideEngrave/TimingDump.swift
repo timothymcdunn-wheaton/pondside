@@ -25,7 +25,9 @@ public enum TimingDump {
          (if (zero? (ly:moment-grace m))
              (let* ((bar (ly:context-property context 'currentBarNumber 1))
                     (pos (ly:context-property context 'measurePosition (ly:make-moment 0)))
-                    (meter (ly:context-property context 'timeSignatureFraction '(4 . 4)))
+                    ; 2.26 renamed timeSignatureFraction to timeSignature (and warns on the old name)
+                    (meter (let ((ts (ly:context-property context 'timeSignature #f)))
+                             (if (pair? ts) ts (ly:context-property context 'timeSignatureFraction '(4 . 4)))))
                     (row (lambda (k vs)
                            (display (string-join
                                      (append (list "PONDSIDE-TIMING"
@@ -65,7 +67,12 @@ public enum TimingDump {
                               (let ((o (ly:input-file-line-char-column loc)))
                                 (list (car o) (cadr o) (caddr o)))
                               '())))
-              (cond (cue (apply pondside-timing-row context "text" (string-append "cue " cue) where))
+              (cond (cue
+                     (apply pondside-timing-row context "text" (string-append "cue " cue) where)
+                     ; a Lexicon entry's cue also says which entry, its length and params
+                     (let ((lex (ly:event-property event 'pondside-lexicon #f)))
+                       (if (pair? lex)
+                           (pondside-timing-row context "lexicon" cue (car lex) (cadr lex) (caddr lex)))))
                     (mark (apply pondside-timing-row context "text" mark where))))))
          ((note-event engraver event)
           (let ((p (ly:event-property event 'pitch #f)))

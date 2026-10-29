@@ -1,9 +1,11 @@
 import AppKit
 import UniformTypeIdentifiers
+import AVFoundation
 import PondsideCore
 import PondsideEngrave
 import PondsideTiming
 import PondsideBridge
+import PondsideLexicon
 
 /// One window: source and score side by side, a one-line status bar, and
 /// bidirectional point-and-click between them. The score is an editor too:
@@ -14,9 +16,18 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     private let editor = SourceEditorView(frame: .zero)
     private let canvas = ScoreCanvasView(frame: .zero)
     private let canvasScroll = NSScrollView()
+    private let firstEngraving = EngravingPlaceholderView()
+    private var settingsPanel: EngravingSettingsPanel?
+    private var player: AVAudioPlayer?
     private let editorPane = NSView()
     private let compilerOutput = CompilerOutputView(frame: .zero)
     private let cueInspector = CueInspectorView(frame: .zero)
+    private lazy var lexiconBrowser: LexiconBrowserPane = {
+        let pane = LexiconBrowserPane(frame: .zero)
+        pane.model.project = score.url.deletingLastPathComponent()
+        pane.model.onInsert = { [weak self] entry in self?.insertGraphic(entry) }
+        return pane
+    }()
     private var panes: PaneHost!
     private var help: HelpOverlay!
     private var chord = ChordRecognizer()
@@ -24,6 +35,20 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     private let statusBar = StatusBarView(frame: .zero)
 
     private var noteInput = NoteInput()
+    private var lens: (any NotationLensSession)?
+    private var lensClosesOnRender = false
+    private var lensAwaitingGeneration = 0
+    private var lensWasExplicit = false
+    /// The last selection the page could show, canvas coordinates: a note
+    /// typed since the engraving has no glyphs yet, so the lens keeps
+    /// pointing at the one it follows.
+    private var lastPageAnchor: NSRect?
+    /// A lens that closes by itself stays at least this long after it last
+    /// changed, so it never flickers past; ⎋ still closes it at once.
+    private static let lensMinimumOpen: TimeInterval = 1.5
+    private var lensChangedAt = Date.distantPast
+    private var lensCloseTask: Task<Void, Never>?
+    private var applyingScoreEdit = false
     /// Set while the score drives the editor, so the editor's selection
     /// callback does not scroll the score the user is looking at.
     private var scoreIsDriving = false
@@ -60,6 +85,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
         score.delegate = self
         score.open()
         updateStatus()
+        DispatchQueue.main.async { [weak self] in self?.offerToRestoreConvertedSettings() }
         if !window.setFrameUsingName(window.frameAutosaveName) { window.center() }
         NotificationCenter.default.addObserver(self, selector: #selector(undoHistoryChanged(_:)),
                                                name: .NSUndoManagerDidUndoChange, object: nil)
@@ -83,6 +109,8 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
         canvasScroll.backgroundColor = Theme.background
         canvasScroll.allowsMagnification = false
         canvasScroll.contentView.postsBoundsChangedNotifications = true
+        // The empty pane's "engraving" animation floats over the clip view.
+        canvasScroll.addSubview(firstEngraving)
 
         // The source pane: a one-line file bar over the editor.
         let fileBar = NSView()
@@ -159,6 +187,9 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
             self.score.userEdited(self.activeFile, text: text)
             AppRPC.shared.publish("score.changed", ["path": .string(self.activeFile.url.path), "by": "app"])
             self.rebuildEngravingMap()
+            if !self.applyingScoreEdit {
+                self.closeLens()
+            }
         }
         editor.onSelectionChange = { [weak self] range in
             self?.editorSelectionChanged(range)
@@ -180,6 +211,8 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     /// Shows `file` in the source pane. Selection, highlight and score
     /// edits all follow the visible file.
     private func showFile(_ file: SourceFile) {
+        closeLens()
+        lastPageAnchor = nil
         activeFile = file
         editor.show(file.url, text: file.text, undoManager: file.undoManager)
         rebuildFileMenu()
@@ -226,6 +259,125 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
         return a..<max(a, b)
     }
 
+    // MARK: Notation Lens
+
+    /// `navigating`: ←→ in the lens moved the selection. The lens keeps its
+    /// kind: an explicit one stays until ⎋, any other closes once the
+    /// stepping stops (and any render it waits for has landed).
+    private func showLens(closesOnRender: Bool, navigating: Bool = false) {
+        let selection = selectionUTF8()
+        guard let content = LensScoreBuilder.build(tree: tree, selection: selection) else {
+            lensLog.debug("no lens for selection \(selection.lowerBound)..<\(selection.upperBound)")
+            if closesOnRender {
+                if !lensWasExplicit { closeLens() }
+            } else {
+                statusBar.flash("Put the caret in a note to open the Notation Lens")
+            }
+            return
+        }
+        if lens == nil {
+            guard #available(macOS 15, *) else {
+                lensLog.debug("needs macOS 15")
+                if !closesOnRender { statusBar.flash("Notation Lens needs macOS 15") }
+                return
+            }
+            let session = NotationLensController()
+            session.onFailure = { [weak self] message in
+                self?.statusBar.flash(message)
+            }
+            session.onClose = { [weak self] in
+                self?.lensCloseTask?.cancel()
+                self?.lensClosesOnRender = false
+                self?.lensWasExplicit = false
+            }
+            lens = session
+        }
+        guard let lens else { return }
+        let wasExplicit = lensWasExplicit && !lensClosesOnRender
+        let explicit = navigating ? wasExplicit : (!closesOnRender || wasExplicit)
+        let shown = lens.present(lens: content, fileLabel: activeFile.displayName, anchor: lensAnchor(), explicit: explicit)
+        lensLog.debug("present \(shown ? "shown" : "failed"), bars \(content.bars.lowerBound)-\(content.bars.upperBound), edit: \(closesOnRender)")
+        guard shown else {
+            if !closesOnRender { statusBar.flash("Notation Lens is unavailable for this passage") }
+            return
+        }
+        lensChangedAt = Date()
+        if navigating {
+            guard !wasExplicit else { return }
+            // Nothing to wait for unless an edit's render is still due.
+            if !lensClosesOnRender { lensAwaitingGeneration = score.completedRenderGeneration }
+            lensWasExplicit = false
+            lensClosesOnRender = true
+            scheduleLensClose(after: Self.lensMinimumOpen)
+            return
+        }
+        // An explicit lens stays until ⎋, even across edits made in it.
+        if closesOnRender, !lensClosesOnRender, lensWasExplicit { return }
+        lensWasExplicit = !closesOnRender
+        lensClosesOnRender = closesOnRender
+        lensAwaitingGeneration = score.renderGeneration + 1
+        if closesOnRender { scheduleLensClose(after: Self.lensMinimumOpen) }
+    }
+
+    /// Where the lens points: the selection's staff when the page shows it,
+    /// else the note it follows; nil keeps an open lens where it is. A
+    /// first opening with neither points at the top of the score pane.
+    private func lensAnchor() -> LensAnchor? {
+        let visible = canvas.visibleRect
+        if let rect = canvas.selectionAnchor ?? lastPageAnchor, visible.intersects(rect) {
+            return LensAnchor(rect: rect, view: canvas)
+        }
+        if lens?.isOpen == true { return nil }
+        if !visible.isEmpty {
+            return LensAnchor(rect: NSRect(x: visible.midX, y: visible.minY, width: 1, height: 1), view: canvas)
+        }
+        guard let content = window?.contentView else { return nil }
+        return LensAnchor(rect: NSRect(x: content.bounds.midX, y: content.bounds.maxY - 40, width: 1, height: 1), view: content)
+    }
+
+    /// ←→ while the lens is open: the next or previous event of the lens's
+    /// voice, the lens following.
+    private func stepLens(_ step: Int) {
+        guard let content = LensScoreBuilder.build(tree: tree, selection: selectionUTF8()),
+              let next = content.neighbor(step) else {
+            NSSound.beep()
+            return
+        }
+        setSelection(utf8: tree.events[next].range)
+        showLens(closesOnRender: false, navigating: true)
+    }
+
+    private func closeLens(animated: Bool = false, _ why: StaticString = #function) {
+        if lens?.isOpen == true { lensLog.debug("close (\(why)), animated: \(animated)") }
+        lensCloseTask?.cancel()
+        lensCloseTask = nil
+        lens?.dismiss(animated: animated)
+        lensClosesOnRender = false
+    }
+
+    /// An edit's lens has done its job once a render newer than the edit
+    /// lands and it has been up for the minimum time; it fades out over the
+    /// page's cross-fade.
+    private func closeLensIfRendered() {
+        guard lensClosesOnRender, lens?.isOpen == true,
+              score.completedRenderGeneration >= lensAwaitingGeneration else { return }
+        let remaining = Self.lensMinimumOpen - Date().timeIntervalSince(lensChangedAt)
+        guard remaining <= 0 else {
+            scheduleLensClose(after: remaining)
+            return
+        }
+        closeLens(animated: true)
+    }
+
+    private func scheduleLensClose(after delay: TimeInterval) {
+        lensCloseTask?.cancel()
+        lensCloseTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled else { return }
+            self?.closeLensIfRendered()
+        }
+    }
+
     /// What score operations act on: whole events, or a single chord
     /// member when the selection lies inside one.
     private func targets() -> (events: [Int], notes: [Int]) {
@@ -263,7 +415,40 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     /// the engraved text, sorted by offset.
     private var linkOffsets: [(offset: Int, position: SourcePosition)] = []
 
+    /// Source colouring from the parsed tree: one pass over the leaves, with a
+    /// UTF-8 → UTF-16 table so it stays linear on large files.
+    private func highlightSyntax() {
+        let text = editor.text
+        var utf16At = [Int](repeating: 0, count: text.utf8.count + 1)
+        var u8 = 0, u16 = 0
+        for scalar in text.unicodeScalars {
+            let n8 = String(scalar).utf8.count, n16 = scalar.utf16.count
+            for k in 0..<n8 { utf16At[u8 + k] = u16 }
+            u8 += n8
+            u16 += n16
+        }
+        if u8 < utf16At.count { utf16At[u8] = u16 }
+        var runs: [(NSRange, NSColor)] = []
+        tree.root.forEachLeaf { leaf in
+            let color: NSColor?
+            switch leaf.kind {
+            case .lineComment, .blockComment: color = Theme.syntaxComment
+            case .command, .escapedPunct: color = Theme.syntaxCommand
+            case .string: color = Theme.syntaxString
+            case .number, .dot: color = Theme.syntaxNumber
+            case .hash, .schemeText, .embeddedOpen, .embeddedClose: color = Theme.syntaxScheme
+            case .openBrace, .closeBrace, .openSimultaneous, .closeSimultaneous, .barCheck: color = Theme.syntaxPunctuation
+            default: color = nil
+            }
+            guard let color, leaf.range.upperBound < utf16At.count else { return }
+            let a = utf16At[leaf.range.lowerBound], b = utf16At[leaf.range.upperBound]
+            runs.append((NSRange(location: a, length: b - a), color))
+        }
+        editor.showSyntax(runs)
+    }
+
     private func rebuildEngravingMap() {
+        highlightSyntax()
         guard let engraved = activeFile.engravedText else {
             engraving = nil
             linkOffsets = []
@@ -297,6 +482,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
         hasSelection = !positions.isEmpty
         highlighted = positions
         canvas.highlight(positions, path: activeFile.url.path, reveal: reveal)
+        if let anchor = canvas.selectionAnchor { lastPageAnchor = anchor }
         updateHints()
     }
 
@@ -333,7 +519,9 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
         let replacement = String(decoding: newBytes[lo..<newHi], as: UTF8.self)
         let a = OffsetConversion.utf16(fromUTF8: lo, in: old)
         let b = OffsetConversion.utf16(fromUTF8: hi, in: old)
+        applyingScoreEdit = true
         editor.replace(NSRange(location: a, length: b - a), with: replacement, actionName: edit.name)
+        applyingScoreEdit = false
 
         // The document re-parsed synchronously; select what the edit produced.
         let new = tree
@@ -345,6 +533,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
         } else {
             selectEvents(selected)
         }
+        showLens(closesOnRender: true)
     }
 
     // MARK: Keyboard note input
@@ -508,7 +697,6 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
 
     private func updateInputStatus() {
         statusBar.setInput(armed: noteInput.armedDuration?.text, buffer: noteInput.bufferText)
-        if noteInput.armedDuration == nil { canvas.clearGhost() }
         updateHints()
     }
 
@@ -524,7 +712,9 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
             // Never fail silently: say which music can't be clicked, and why.
             note = "\(f.displayName) has notes but no point-and-click links"
         }
-        statusBar.set(status: score.status, detail: firstErrorText(), zoom: canvas.zoom, toolchain: lily, note: note)
+        statusBar.set(status: score.status, detail: firstErrorText(), zoom: canvas.zoom, toolchain: lily, note: note,
+                      stale: score.showingCachedRender)
+        firstEngraving.setActive(canvas.pages.isEmpty && score.status == .compiling)
         updateHints()
     }
 
@@ -537,16 +727,16 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     private func updateHints() {
         var hints: [String]
         if hasSelection {
-            hints = ["↑↓ pitch  ⇧ octave  ⌥ accidental", "1 2 4 8 16 duration  . dot", "a–g insert  ⌫ delete"]
+            hints = ["↑↓ pitch  ⇧↑↓ octave  ⌥↑↓ sharp/flat", "1 2 4 8 16 duration  . dot", "a–g insert  ⌫ delete  ⌘L lens"]
         } else {
             hints = ["Click a note to select it", "←→ walk the score", "⌘J switch pane"]
         }
-        if noteInput.armedDuration != nil { hints.insert("Click a staff to place a note", at: 0) }
+        if noteInput.armedDuration != nil { hints.insert("Type a–g to insert · ⎋ to disarm", at: 0) }
         if hasSelection, window?.firstResponder !== canvas {
             hints.insert("Keys type text here: click the score (or ⌘J) for note keys", at: 0)
         }
         if case .errors = score.status { hints.insert("Errors are underlined in the source", at: 0) }
-        statusBar.setHints(Array(hints.prefix(3)))
+        statusBar.setHints(Array(hints.prefix(3)) + ["⌘/ all actions"])
     }
 
     private func showDiagnostics() {
@@ -604,6 +794,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     // MARK: NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
+        closeLens()
         NotificationCenter.default.removeObserver(self)
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
@@ -628,8 +819,16 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
             guard let self else { return }
             let text = self.editor.text
             guard text != self.activeFile.text else { return }
+            let fromSource = self.window?.firstResponder === self.editor.textView
+            self.applyingScoreEdit = true
             self.editor.onUserEdit?(text)
+            self.applyingScoreEdit = false
             self.refreshHighlight(reveal: false)
+            if fromSource {
+                self.closeLens()
+            } else {
+                self.showLens(closesOnRender: true)
+            }
         }
     }
 }
@@ -694,53 +893,6 @@ extension DocumentWindowController: ScoreCanvasDelegate {
         handleScoreKey(event)
     }
 
-    func canvas(_ canvas: ScoreCanvasView, missedStaffWith stavesOnPage: Int) {
-        statusBar.flash(stavesOnPage == 0
-            ? "Mouse entry found no five-line staves on this page, so it can't place notes here (⎋ disarms)"
-            : "Click on a staff, or just above or below it, to place a note (⎋ disarms)")
-        NSSound.beep()
-    }
-
-    func canvasWantsMouseEntry(_ canvas: ScoreCanvasView) -> Bool {
-        noteInput.armedDuration != nil
-    }
-
-    /// Mouse entry: the staff position is the pitch, the armed duration the
-    /// value, and the note goes after whatever stands to the left.
-    func canvas(_ canvas: ScoreCanvasView, clickedStaff staff: Staff, at point: Point, on page: EngravedPage) {
-        var anchors: [MouseEntry.Anchor] = []
-        var owners: [(file: SourceFile, event: Int)] = []
-        for file in score.files where file.hasNotes {
-            guard let engraved = file.engravedText else { continue }
-            let map = EngravingMap(engraved: engraved, current: file.text)
-            let text = file.text
-            let found = MouseEntry.anchors(on: staff, page: page, tree: file.tree, linkedFrom: { file.matches(path: $0) }) { p in
-                map.engravedOffset(of: p).map { OffsetConversion.utf8(fromUTF16: map.currentOffset(forEngraved: $0), in: text) }
-            }
-            for a in found {
-                owners.append((file, a.ref))
-                anchors.append(MouseEntry.Anchor(bounds: a.bounds, pitch: a.pitch, ref: owners.count - 1))
-            }
-        }
-        switch MouseEntry.target(click: point, staff: staff, anchors: anchors) {
-        case .failure(.nothingBefore):
-            statusBar.flash("Click to the right of a note: mouse entry places the new note after it")
-            NSSound.beep()
-        case .failure(.uncalibrated):
-            statusBar.flash("Mouse entry reads the clef from the notes on a staff; type the first one")
-            NSSound.beep()
-        case .success(let target):
-            let owner = owners[target.after]
-            if owner.file !== activeFile { showFile(owner.file) }
-            guard tree.events[owner.event].acceptsNoteEntry else {
-                statusBar.flash("Notes can't be inserted there; type them in the source")
-                NSSound.beep()
-                return
-            }
-            apply(ScoreEditor(tree).insert(step: target.step, after: owner.event, duration: noteInput.armedDuration,
-                                           octave: target.octave))
-        }
-    }
 }
 
 extension DocumentWindowController: ScoreDocumentDelegate {
@@ -782,6 +934,14 @@ extension DocumentWindowController: ScoreDocumentDelegate {
         }
     }
 
+    func documentDidLoadCachedRender(_ document: ScoreDocument) {
+        canvas.setPages(score.pages)
+        canvas.fitWidth()
+        rebuildEngravingMap()
+        refreshHighlight(reveal: false)
+        updateStatus()
+    }
+
     func documentDidEngrave(_ document: ScoreDocument) {
         let first = canvas.pages.isEmpty
         canvas.setPages(score.pages)
@@ -793,6 +953,8 @@ extension DocumentWindowController: ScoreDocumentDelegate {
         refreshHighlight(reveal: false)
         showDiagnostics()
         updateStatus()
+        closeLensIfRendered()
+        refreshEngravingSettings()
     }
 }
 
@@ -860,16 +1022,15 @@ extension DocumentWindowController: CommandResponder {
         case "add.tenuto": apply(editor.togglePostEvent("--", events: pitched))
         case "add.fermata": apply(editor.togglePostEvent("\\fermata", events: selected))
         case "add.dynamic": showDynamicPicker(events: selected)
-        case "add.tuplet":
-            guard let edit = editor.wrapTuplet(events: selected) else {
-                statusBar.flash("A tuplet needs a selection inside one { } block")
-                NSSound.beep()
-                return
-            }
-            apply(edit)
+        case "add.tuplet": showTupletPicker(events: selected)
+        case "add.clef": showClefPicker(events: selected)
+        case "add.time": showTimePicker(events: selected)
+        case "add.key": showKeyPicker(events: selected)
+        case "add.tempo": showTempoPicker(events: selected)
+        case "add.text": showTextPicker(events: selected)
+        case "add.cue": addCue(events: selected)
         case "add.note": statusBar.flash("Type a–g with the score focused: the note goes after the selection")
         case "add.rest": insert(step: nil)
-        case "add.mouse": statusBar.flash("Type a duration (4, 8, 16…) with nothing selected, then click a staff")
 
         case "edit.undo": activeFile.undoManager.undo()
         case "edit.redo": activeFile.undoManager.redo()
@@ -889,6 +1050,10 @@ extension DocumentWindowController: CommandResponder {
             noteInput.arm(nil)
             updateInputStatus()
 
+        case "file.engravingSettings": showEngravingSettings()
+        case "file.lilypond": showLilyPondPicker()
+        case "view.play": togglePlayback()
+        case "view.lens": showLens(closesOnRender: false)
         case "view.zoomIn": zoomIn(nil)
         case "view.zoomOut": zoomOut(nil)
         case "view.actualSize": actualSize(nil)
@@ -952,6 +1117,18 @@ extension DocumentWindowController: CommandResponder {
             return false
         }
         help.optionChanged(isDown: false)
+        if event.keyCode == 53, lens?.isOpen == true {
+            closeLens()
+            return true
+        }
+        // Plain ←→ step through the lens's voice; with modifiers they keep
+        // their usual meaning.
+        if lens?.isOpen == true, event.type == .keyDown, !noteInput.isBuffering,
+           flags.subtracting([.numericPad, .function]).isEmpty,
+           let key = event.specialKey, key == .leftArrow || key == .rightArrow {
+            stepLens(key == .rightArrow ? 1 : -1)
+            return true
+        }
         let keymap = CommandCenter.shared.keymap
         if chord.isActive {
             if event.keyCode == 53 {
@@ -1087,6 +1264,417 @@ extension DocumentWindowController: CommandResponder {
 
     private static let dynamics = ["ppp", "pp", "p", "mp", "mf", "f", "ff", "fff", "fp", "sf", "sfz", "rfz"]
 
+    /// `score_context` for the selection (DESIGN.md §8): what the files say
+    /// (ScoreContext), plus what only the engraving knows, the system the
+    /// selection is on: its first and last events in this staff's music,
+    /// and the first event of the next system.
+    var rpcContext: JSONValue {
+        let text = editor.text
+        let r = selectionUTF8()
+        let start = SourceText(text).position(of: text.utf8.index(text.utf8.startIndex, offsetBy: min(r.lowerBound, text.utf8.count)))
+        var context = ScoreContext.describe(text: text, file: activeFile.url.path, line: start.line, character: start.character)
+        guard case var .object(o) = context else { return context }
+        if let system = systemOfSelection(text: text) { o["system"] = system }
+        context = .object(o)
+        return context
+    }
+
+    private func systemOfSelection(text: String) -> JSONValue? {
+        let links = canvas.linksOnSelectedSystem().filter { PathMatching.same($0.path, activeFile.url.path) }
+        guard let anchor = targets().events.first,
+              let block = LensBlockFinder.block(in: tree, at: tree.events[anchor].range.lowerBound) else { return nil }
+        let staffEvents = Set(block.events)
+        let onSystem = Set(links.compactMap { currentOffset(of: $0) }.compactMap { tree.eventIndex(at: $0) })
+            .intersection(staffEvents).sorted()
+        guard let first = onSystem.first, let last = onSystem.last else { return nil }
+        func describe(_ e: Int) -> JSONValue {
+            let p = SourceText(text).position(of: text.utf8.index(text.utf8.startIndex, offsetBy: tree.events[e].range.lowerBound))
+            return ["text": .string(tree.string(tree.events[e].range)), "line": .number(Double(p.line)),
+                    "character": .number(Double(p.character))]
+        }
+        var out: [String: JSONValue] = ["first": describe(first), "last": describe(last)]
+        if let next = block.events.sorted().first(where: { $0 > last }) { out["next"] = describe(next) }
+        return .object(out)
+    }
+
+    // MARK: Toolchains
+
+    /// Every LilyPond found, the one in use marked; choosing one pins it in
+    /// the project's pondside.toml (a file, like everything else).
+    private func showLilyPondPicker() {
+        Task {
+            let installs = await ToolchainStore.shared.installs()
+            guard !installs.isEmpty else {
+                self.statusBar.flash("No LilyPond found — brew install lilypond")
+                return
+            }
+            let current = self.score.installation
+            let choices = installs.map { i -> (title: String, detail: String?) in
+                let mark = i == current ? " — in use" : ""
+                return ("LilyPond \(i.version)\(mark)", "\(i.origin.rawValue): \(i.resolvedPath)")
+            }
+            self.showPicker(placeholder: "LilyPond version for this score", choices: choices) { [weak self] index in
+                guard let self else { return }
+                let install = installs[index]
+                let dir = (try? ProjectConfig.find(from: self.score.url))?.root ?? self.score.url.deletingLastPathComponent()
+                let file = dir.appendingPathComponent(ProjectConfig.fileName)
+                let old = (try? String(contentsOf: file, encoding: .utf8)) ?? ""
+                do {
+                    try ProjectConfig.settingLilyPond(version: "\(install.version)", in: old).write(to: file, atomically: true, encoding: .utf8)
+                    self.score.use(install)
+                    self.statusBar.flash("LilyPond \(install.version) for this score (\(file.lastPathComponent))")
+                } catch {
+                    self.statusBar.flash("Couldn't write \(file.path): \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    // MARK: Audition
+
+    /// The mockup `pondside mockup` wrote: beside the score, or in the
+    /// project's SuperCollider resources folder.
+    private var mockupURL: URL? {
+        let name = score.url.deletingPathExtension().lastPathComponent + ".wav"
+        var places = [score.url.deletingLastPathComponent().appendingPathComponent(name)]
+        if let res = (try? ProjectConfig.find(from: score.url))?.resources {
+            places += [res.appendingPathComponent(name), res.appendingPathComponent("piece.wav")]
+        }
+        return places.first { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    private func togglePlayback() {
+        if let player, player.isPlaying {
+            player.stop()
+            self.player = nil
+            statusBar.flash("Stopped")
+            return
+        }
+        guard let url = mockupURL else {
+            statusBar.flash("No mockup yet: run pondside mockup \(score.url.lastPathComponent) in the terminal pane")
+            NSSound.beep()
+            return
+        }
+        // Start at the selected bar, timed as the MIDI the mockup came from.
+        var start = 0.0
+        if let log = score.timingLog, let first = targets().events.first,
+           let window = LensScoreBuilder.build(tree: tree, selection: tree.events[first].range), let target = window.target {
+            let bar = window.bars.lowerBound + target.measureIndex
+            if let row = log.rows.first(where: { $0.bar >= bar }) { start = TempoMap(log).seconds(at: row.moment) }
+        }
+        do {
+            let p = try AVAudioPlayer(contentsOf: url)
+            p.currentTime = min(start, max(0, p.duration - 0.1))
+            p.play()
+            player = p
+            statusBar.flash("Playing \(url.lastPathComponent) from \(String(format: "%.1f", start)) s — ⌘⇧P stops")
+        } catch {
+            statusBar.flash("Can't play \(url.lastPathComponent): \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: Engraving settings
+
+    private var settingsDocument: EngravingSettingsDocument {
+        EngravingSettingsDocument(root: score.root.text,
+                                  others: score.files.dropFirst().map { (file: $0.displayName, text: $0.text) })
+    }
+
+    private func showEngravingSettings() {
+        let panel = settingsPanel ?? {
+            let panel = EngravingSettingsPanel()
+            panel.model.onChange = { [weak self] setting, value in
+                guard let self else { return }
+                self.applyText(self.settingsDocument.edits(setting: setting, to: value), to: self.score.root,
+                               name: setting.title)
+                self.refreshEngravingSettings()
+            }
+            panel.model.onRestoreAll = { [weak self] in self?.restoreEngravingDefaults() }
+            panel.model.onShowSource = { [weak self] in
+                guard let self else { return }
+                if self.activeFile !== self.score.root { self.showFile(self.score.root) }
+                self.window?.makeKeyAndOrderFront(nil)
+                self.window?.makeFirstResponder(self.editor.textView)
+            }
+            if let frame = window?.frame, !panel.setFrameUsingName("Pondside.engravingSettings") {
+                panel.setFrameTopLeftPoint(NSPoint(x: frame.maxX - panel.frame.width - 24, y: frame.maxY - 64))
+            }
+            settingsPanel = panel
+            return panel
+        }()
+        refreshEngravingSettings(force: true)
+        panel.orderFront(nil)
+    }
+
+    private func refreshEngravingSettings(force: Bool = false) {
+        guard let panel = settingsPanel, force || panel.isVisible else { return }
+        panel.model.rootName = score.root.displayName
+        panel.model.values = settingsDocument.values
+    }
+
+    private func restoreEngravingDefaults() {
+        guard let window = settingsPanel ?? window else { return }
+        let alert = NSAlert()
+        alert.messageText = "Restore LilyPond's defaults?"
+        alert.informativeText = "Every engraving setting goes back to LilyPond's default: Pondside removes the settings from \(score.root.displayName), or writes the default where another file sets something else. You can undo it in the source."
+        alert.addButton(withTitle: "Restore Defaults")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .alertFirstButtonReturn else { return }
+            let doc = self.settingsDocument
+            let changes = EngravingSetting.all.filter { doc.value(of: $0).value != $0.defaultValue }.map { ($0, $0.defaultValue) }
+            self.applyText(doc.edits(for: changes), to: self.score.root, name: "Restore Engraving Defaults")
+            self.refreshEngravingSettings()
+        }
+    }
+
+    /// Applies `edits` to `file` as one undoable change in that file's
+    /// history, showing it in the source pane while it happens.
+    private func applyText(_ edits: [TextEdit], to file: SourceFile, name: String) {
+        guard !edits.isEmpty else { return }
+        let previous = activeFile
+        if file !== activeFile { showFile(file) }
+        let old = editor.text
+        let oldBytes = Array(old.utf8)
+        let newBytes = edits.apply(to: oldBytes)
+        let lo = edits.map(\.range.lowerBound).min()!
+        let hi = edits.map(\.range.upperBound).max()!
+        let newHi = hi + newBytes.count - oldBytes.count
+        let replacement = String(decoding: newBytes[lo..<newHi], as: UTF8.self)
+        let a = OffsetConversion.utf16(fromUTF8: lo, in: old)
+        let b = OffsetConversion.utf16(fromUTF8: hi, in: old)
+        applyingScoreEdit = true
+        editor.replace(NSRange(location: a, length: b - a), with: replacement, actionName: name)
+        applyingScoreEdit = false
+        if previous !== file { showFile(previous) }
+    }
+
+    /// Once per score: a file musicxml2ly made turns LilyPond's defaults off
+    /// (beaming, key cancellation). Offer to put them back.
+    private func offerToRestoreConvertedSettings() {
+        let key = "Pondside.convertedScoresChecked"
+        var checked = Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
+        guard !checked.contains(score.url.path), let window else { return }
+        let findings = ConvertedScoreCheck.findings(in: score.files.map { (file: $0.displayName, text: $0.text) })
+        guard !findings.isEmpty else { return }
+        checked.insert(score.url.path)
+        UserDefaults.standard.set(Array(checked), forKey: key)
+
+        let files = Array(Set(findings.map(\.file))).sorted().joined(separator: ", ")
+        let alert = NSAlert()
+        alert.messageText = "\(files) looks converted from MusicXML"
+        alert.informativeText = "musicxml2ly turned some of LilyPond's defaults off:\n"
+            + findings.map { "• \($0.description) (\($0.file), line \($0.line))" }.joined(separator: "\n")
+            + "\n\nPondside can restore them: it writes the defaults in \(score.root.displayName)'s settings. "
+            + "Beams written with [ ] stay as they are. You can undo it in the source."
+        alert.addButton(withTitle: "Restore Defaults")
+        alert.addButton(withTitle: "Keep As Is")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .alertFirstButtonReturn else { return }
+            let settings = findings.compactMap { f in EngravingSetting.named(f.setting).map { ($0, f.value) } }
+            self.applyText(self.settingsDocument.edits(for: settings), to: self.score.root, name: "Restore Defaults")
+            self.statusBar.flash("Restored LilyPond's defaults")
+        }
+    }
+
+    /// The Lexicon pane's "Insert over Selection": the graphic from the
+    /// first selected event to the last, its include wired into the root.
+    private func insertGraphic(_ entry: LexiconEntry) {
+        let events = targets().events
+        guard let first = events.min(), let last = events.max(), last > first else {
+            statusBar.flash("Select the notes or skips the graphic should span (at least two)")
+            NSSound.beep()
+            return
+        }
+        let text = editor.text
+        let start = ScoreContext.lineAndCharacter(of: tree.events[first].range.lowerBound, in: text)
+        let stop = ScoreContext.lineAndCharacter(of: tree.events[last].range.lowerBound, in: text)
+        do {
+            let new = try GraphicEdit.insert(into: text, id: entry.id, params: "()", start: start, stop: stop)
+            applyText(EngravingSettingsDocument.span(from: Array(text.utf8), to: Array(new.utf8)), to: activeFile,
+                      name: "Insert \(entry.id)")
+            let lex = Lexicon.load(Lexicon.standardScopes(project: score.url.deletingLastPathComponent()))
+            let used = Set(score.files.flatMap { LexiconUse.find(in: $0.text).map(\.id) })
+            try Data(lex.includeFile(for: used).utf8).write(to: score.url.deletingLastPathComponent().appendingPathComponent("lexicon.ily"), options: .atomic)
+            let root = score.root.text
+            if !root.contains("\\include \"lexicon.ily\"") {
+                let withInclude = GraphicEdit.withLexiconInclude(root)
+                applyText(EngravingSettingsDocument.span(from: Array(root.utf8), to: Array(withInclude.utf8)), to: score.root,
+                          name: "Include the Lexicon")
+            }
+            statusBar.flash("Inserted \(entry.id); its params are in the source")
+        } catch {
+            statusBar.flash("\(error)")
+            NSSound.beep()
+        }
+    }
+
+    // MARK: Add… pickers
+
+    /// A picker of presets that also takes what was typed, when `custom`
+    /// can make a value of it ("7/8", "4 = 96", any words).
+    private func showEntryPicker(placeholder: String, presets: [(title: String, value: String, detail: String?)],
+                                 custom: @escaping (String) -> String?, choose: @escaping (String) -> Void) {
+        guard let window else { return }
+        let values = Box<[String]>([])
+        let panel = PalettePanel(placeholder: placeholder, provider: { query in
+            var rows: [PaletteRow] = []
+            var chosen: [String] = []
+            let typed = query.trimmingCharacters(in: .whitespaces)
+            if !typed.isEmpty, let value = custom(typed), !presets.contains(where: { $0.value == value }) {
+                rows.append(PaletteRow(title: "Use “\(typed)”", detail: value, matched: []))
+                chosen.append(value)
+            }
+            let scored = presets.enumerated().compactMap { i, p -> (index: Int, score: Int, positions: [Int])? in
+                if typed.isEmpty { return (i, 0, []) }
+                return FuzzyMatch.match(typed, in: p.title).map { (i, $0.score, $0.positions) }
+            }.sorted { $0.score > $1.score || ($0.score == $1.score && $0.index < $1.index) }
+            for (i, _, positions) in scored {
+                rows.append(PaletteRow(title: presets[i].title, detail: presets[i].detail, matched: positions))
+                chosen.append(presets[i].value)
+            }
+            values.value = chosen
+            return rows
+        }, onChoose: { i in
+            guard values.value.indices.contains(i) else { return }
+            choose(values.value[i])
+        })
+        panel.present(over: window)
+    }
+
+    private func applyCommand(_ command: String, events: [Int], name: String) {
+        guard let first = events.min(), let edit = ScoreEditor(tree).insertCommand(command, before: first, name: name) else {
+            NSSound.beep()
+            return
+        }
+        apply(edit)
+    }
+
+    private func showTupletPicker(events: [Int]) {
+        let presets: [(String, String, String?)] = [
+            ("Triplet", "3/2", "3 in the time of 2"), ("Quintuplet", "5/4", "5 in the time of 4"),
+            ("Sextuplet", "6/4", "6 in the time of 4"), ("Septuplet", "7/8", "7 in the time of 8"),
+            ("Septuplet in 4", "7/4", "7 in the time of 4"), ("Duplet", "2/3", "2 in the time of 3"),
+            ("Quadruplet", "4/3", "4 in the time of 3"),
+        ]
+        showEntryPicker(placeholder: "Tuplet — or type a ratio, e.g. 9/8", presets: presets.map { ($0.0, $0.1, $0.2) },
+                        custom: Self.ratio) { [weak self] value in
+            guard let self else { return }
+            let parts = value.split(separator: "/").compactMap { Int($0) }
+            guard parts.count == 2, let edit = ScoreEditor(self.tree).wrapTuplet(events: events, numerator: parts[0], denominator: parts[1]) else {
+                self.statusBar.flash("A tuplet needs a selection inside one { } block")
+                NSSound.beep()
+                return
+            }
+            self.apply(edit)
+        }
+    }
+
+    private static func ratio(_ text: String) -> String? {
+        let parts = text.replacingOccurrences(of: ":", with: "/").split(separator: "/")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        guard parts.count == 2, let a = Int(parts[0]), let b = Int(parts[1]), a > 0, b > 0, a < 100, b < 100 else { return nil }
+        return "\(a)/\(b)"
+    }
+
+    private func showClefPicker(events: [Int]) {
+        let clefs: [(String, String)] = [
+            ("treble", "Treble"), ("bass", "Bass"), ("alto", "Alto"), ("tenor", "Tenor"),
+            ("treble_8", "Treble 8vb (tenor voice, guitar)"), ("treble^8", "Treble 8va (piccolo)"),
+            ("bass_8", "Bass 8vb (double bass)"), ("soprano", "Soprano"), ("mezzosoprano", "Mezzo-soprano"),
+            ("baritone", "Baritone"), ("percussion", "Percussion"),
+        ]
+        showEntryPicker(placeholder: "Clef", presets: clefs.map { ($0.1, $0.0, "\\clef \($0.0)") },
+                        custom: { LensClef.named($0) != nil ? $0 : nil }) { [weak self] name in
+            let spelled = name.contains("_") || name.contains("^") ? "\"\(name)\"" : name
+            self?.applyCommand("\\clef \(spelled)", events: events, name: "Clef")
+        }
+    }
+
+    private func showTimePicker(events: [Int]) {
+        let meters = ["4/4", "3/4", "2/4", "2/2", "6/8", "9/8", "12/8", "3/8", "5/4", "5/8", "7/8", "6/4"]
+        showEntryPicker(placeholder: "Time signature — or type one, e.g. 11/8", presets: meters.map { ($0, $0, nil) },
+                        custom: Self.ratio) { [weak self] meter in
+            self?.applyCommand("\\time \(meter)", events: events, name: "Time Signature")
+        }
+    }
+
+    private func showKeyPicker(events: [Int]) {
+        let language = activeFile.entryLanguage
+        // Circle of fifths: tonic step and alteration (quarter tones), major then minor.
+        let majors: [(Int, Int)] = [(0, 0), (4, 0), (1, 0), (5, 0), (2, 0), (6, 0), (3, 2), (0, 2),
+                                    (3, 0), (6, -2), (2, -2), (5, -2), (1, -2), (4, -2), (0, -2)]
+        let minors: [(Int, Int)] = [(5, 0), (2, 0), (6, 0), (3, 2), (0, 2), (4, 2), (1, 2), (5, 2),
+                                    (1, 0), (4, 0), (0, 0), (3, 0), (6, -2), (2, -2), (5, -2)]
+        func label(_ step: Int, _ alteration: Int, _ mode: String) -> String {
+            let letter = ["C", "D", "E", "F", "G", "A", "B"][step]
+            return letter + (alteration > 0 ? "♯" : alteration < 0 ? "♭" : "") + " " + mode
+        }
+        let presets = majors.map { (label($0.0, $0.1, "major"), language.spell(step: $0.0, alteration: $0.1) + " \\major", nil as String?) }
+            + minors.map { (label($0.0, $0.1, "minor"), language.spell(step: $0.0, alteration: $0.1) + " \\minor", nil as String?) }
+        showEntryPicker(placeholder: "Key signature", presets: presets, custom: { _ in nil }) { [weak self] key in
+            self?.applyCommand("\\key \(key)", events: events, name: "Key Signature")
+        }
+    }
+
+    private func showTempoPicker(events: [Int]) {
+        let presets: [(String, String, String?)] = [
+            "Adagio", "Andante", "Moderato", "Allegro", "Presto",
+        ].map { ($0, "\"\($0)\"", nil) } + ["4 = 60", "4 = 90", "4 = 120", "4. = 60", "2 = 60"].map { ($0, $0, nil) }
+        showEntryPicker(placeholder: "Tempo — words, 4 = 96, or both: Allegro 4 = 132", presets: presets,
+                        custom: Self.tempo) { [weak self] tempo in
+            self?.applyCommand("\\tempo \(tempo)", events: events, name: "Tempo")
+        }
+    }
+
+    /// "Allegro 4 = 132" → `"Allegro" 4 = 132`; "4. = 60" and "Allegro" alone too.
+    private static func tempo(_ text: String) -> String? {
+        let words = text.split(separator: " ").map(String.init)
+        if let eq = words.firstIndex(of: "="), eq > 0, eq + 1 < words.count,
+           let unit = words[eq - 1].first, unit.isNumber, Int(words[eq + 1]) != nil {
+            let mark = words[(eq - 1)...].joined(separator: " ")
+            let label = words[..<(eq - 1)].joined(separator: " ")
+            return label.isEmpty ? mark : "\"\(escaped(label))\" \(mark)"
+        }
+        return "\"\(escaped(text))\""
+    }
+
+    private static func escaped(_ text: String) -> String {
+        text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+    }
+
+    private func showTextPicker(events: [Int]) {
+        let words = ["dolce", "espressivo", "cantabile", "legato", "leggiero", "sul pont.", "sul tasto", "pizz.", "arco",
+                     "rit.", "accel.", "a tempo", "poco a poco"]
+        showEntryPicker(placeholder: "Text above the note — or type any words", presets: words.map { ($0, $0, nil) },
+                        custom: { $0 }) { [weak self] text in
+            guard let self else { return }
+            let pitched = events.filter { self.tree.events[$0].acceptsNoteEntry }
+            self.apply(ScoreEditor(self.tree).togglePostEvent("^\\markup \\italic \"\(Self.escaped(text))\"", events: Array(pitched.prefix(1))))
+        }
+    }
+
+    /// The next cue number on the selection, if the score defines `\ecue`.
+    private func addCue(events: [Int]) {
+        let texts = score.files.map(\.text)
+        guard texts.contains(where: { $0.contains("ecue =") || $0.contains("ecue=") }) else {
+            statusBar.flash("Cues need \\ecue, from the electronics staff library (lilypond-electronics-staff)")
+            NSSound.beep()
+            return
+        }
+        var highest = 0
+        for text in texts {
+            var rest = Substring(text)
+            while let r = rest.range(of: "\\ecue \"") {
+                rest = rest[r.upperBound...]
+                if let n = Int(rest.prefix { $0.isNumber }) { highest = max(highest, n) }
+            }
+        }
+        guard let first = events.min() else { return }
+        apply(ScoreEditor(tree).togglePostEvent("\\ecue \"\(highest + 1)\"", events: [first]))
+        statusBar.flash("Cue \(highest + 1)")
+    }
+
     private func showDynamicPicker(events: [Int]) {
         showPicker(placeholder: "Dynamic", choices: Self.dynamics.map { (title: "\\" + $0, detail: nil as String?) }) { [weak self] i in
             guard let self else { return }
@@ -1125,7 +1713,7 @@ extension DocumentWindowController: CommandResponder {
     private static let layoutKey = "Pondside.layout"
     private static let workspacesKey = "Pondside.workspaces"
     /// Content that exists today; the rest shows a placeholder naming its milestone.
-    private static let builtContent: [PaneContent] = [.score, .lilypond, .compilerOutput, .terminal, .cues]
+    private static let builtContent: [PaneContent] = [.score, .lilypond, .compilerOutput, .terminal, .agent, .cues, .lexicon]
 
     private static func savedLayout() -> PaneLayout {
         if let data = UserDefaults.standard.data(forKey: layoutKey),
@@ -1148,6 +1736,14 @@ extension DocumentWindowController: CommandResponder {
             compilerOutput.show(score.lastLog)
             return compilerOutput
         case .terminal: return TerminalPane(directory: score.url.deletingLastPathComponent())
+        case .agent:
+            // Any agent; it reaches Pondside through `pondside mcp` (docs/API.md).
+            let config = try? ProjectConfig.find(from: score.url)
+            return TerminalPane(directory: score.url.deletingLastPathComponent(), command: config?.agentCommand ?? "claude")
+        case .lexicon:
+            lexiconBrowser.model.installation = score.installation
+            lexiconBrowser.model.reload()
+            return lexiconBrowser
         case .cues:
             cueInspector.onJump = { [weak self] cue in self?.reveal(cue) }
             cueInspector.show(score.cueSheet, scoreFolder: score.url.deletingLastPathComponent())
@@ -1162,6 +1758,7 @@ extension DocumentWindowController: CommandResponder {
         case .lilypond: return editor.textView
         case .cues: return cueInspector.responder
         case .terminal: return (panes.view(for: .terminal) as? TerminalPane)?.responder ?? panes.view(for: .terminal)
+        case .agent: return (panes.view(for: .agent) as? TerminalPane)?.responder ?? panes.view(for: .agent)
         default: return panes.view(for: content)
         }
     }

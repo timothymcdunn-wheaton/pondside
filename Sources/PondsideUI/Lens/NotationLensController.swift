@@ -1,0 +1,121 @@
+import AppKit
+import PondsideCore
+
+/// Owns the lens's popover while it is open. It points at the passage on
+/// the page, beside the staff rather than over it, and appears without
+/// motion because edits open it keystroke after keystroke (HIG, Motion);
+/// the render that makes it unnecessary fades it out. It never takes key
+/// focus: ←→ and ⎋ reach it through the window's key monitor.
+@available(macOS 15.0, *)
+@MainActor
+final class NotationLensController: NSObject, NotationLensSession, NSPopoverDelegate {
+    private var popover: NSPopover?
+    private var card: NotationLensOverlayView?
+    private var host: LensScoreHostView?
+    private weak var anchorView: NSView?
+
+    var onClose: (() -> Void)?
+    var onFailure: ((String) -> Void)?
+
+    var isOpen: Bool { popover?.isShown == true }
+
+    private static var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+
+    func present(lens: LensScoreWindow, fileLabel: String, anchor: LensAnchor?, explicit: Bool) -> Bool {
+        if let popover, let host, let card, popover.isShown {
+            do {
+                try host.load(lens)
+            } catch {
+                lensLog.error("refresh failed: \(String(describing: error), privacy: .public)")
+                dismiss(animated: false)
+                onFailure?("Notation Lens could not display this passage")
+                return false
+            }
+            card.update(lens: lens, fileLabel: fileLabel, explicit: explicit)
+            popover.animates = false
+            // Following the cursor note by note is too much motion: the
+            // arrow keeps pointing where the lens opened, and the strip's
+            // highlight shows the cursor. Only a move to another staff
+            // line, where the arrow would point at the wrong music, moves it.
+            if let anchor, anchor.view === anchorView, !Self.sameLine(anchor.rect, popover.positioningRect) {
+                popover.positioningRect = anchor.rect
+            }
+            card.layoutSubtreeIfNeeded()
+            host.centerTarget(animated: !Self.reduceMotion)
+            return true
+        }
+        guard let anchor else { return false }
+
+        let host = LensScoreHostView()
+        do {
+            try host.load(lens)
+        } catch {
+            lensLog.error("load failed: \(String(describing: error), privacy: .public)")
+            onFailure?("Notation Lens could not display this passage")
+            return false
+        }
+        let card = NotationLensOverlayView(host: host)
+        card.update(lens: lens, fileLabel: fileLabel, explicit: explicit)
+        // Auto Layout sizes a popover to its content's fitting size, and the
+        // strip has no intrinsic width: pin the card, or it collapses.
+        let size = NSSize(width: Self.width(for: anchor), height: NotationLensOverlayView.musicHeight + 42)
+        card.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            card.widthAnchor.constraint(equalToConstant: size.width),
+            card.heightAnchor.constraint(equalToConstant: size.height),
+        ])
+        let controller = NSViewController()
+        controller.view = card
+        controller.preferredContentSize = size
+
+        let popover = NSPopover()
+        popover.contentViewController = controller
+        popover.contentSize = size
+        // Clicking elsewhere in the window dismisses it, as a nonmodal popover should.
+        popover.behavior = .semitransient
+        popover.appearance = anchor.view.window?.appearance
+        popover.animates = false
+        popover.delegate = self
+        // Above the staff, so the bars still to come stay in view; the
+        // popover flips below when there's no room.
+        popover.show(relativeTo: anchor.rect, of: anchor.view, preferredEdge: anchor.view.isFlipped ? .minY : .maxY)
+        lensLog.debug("opening at \(Int(anchor.rect.midX)),\(Int(anchor.rect.minY)) in \(String(describing: type(of: anchor.view)))")
+        card.layoutSubtreeIfNeeded()
+        host.centerTarget(animated: false)
+        self.popover = popover
+        anchorView = anchor.view
+        self.card = card
+        self.host = host
+        return true
+    }
+
+    private static func sameLine(_ a: NSRect, _ b: NSRect) -> Bool {
+        a.minY < b.maxY && b.minY < a.maxY
+    }
+
+    /// Wide enough for a few bars, never wider than the score pane allows.
+    private static func width(for anchor: LensAnchor) -> CGFloat {
+        let room = anchor.view.enclosingScrollView?.contentView.bounds.width ?? anchor.view.bounds.width
+        return min(640, max(380, room - 48))
+    }
+
+    func dismiss(animated: Bool) {
+        guard let popover else { return }
+        lensLog.debug("dismiss, animated: \(animated)")
+        self.popover = nil
+        card = nil
+        host = nil
+        popover.animates = animated && !Self.reduceMotion
+        popover.close()
+        onClose?()
+    }
+
+    // A click elsewhere closed it.
+    func popoverDidClose(_ notification: Notification) {
+        guard let closed = notification.object as? NSPopover, closed === popover else { return }
+        popover = nil
+        card = nil
+        host = nil
+        onClose?()
+    }
+}

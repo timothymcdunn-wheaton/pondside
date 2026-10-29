@@ -189,6 +189,20 @@ final class SourceEditorView: NSView, NSTextViewDelegate {
         if scroll { textView.scrollRangeToVisible(clamped) }
     }
 
+    /// Colours the source by token kind with rendering attributes, which
+    /// decorate the text without editing it (and without touching undo).
+    func showSyntax(_ runs: [(NSRange, NSColor)]) {
+        guard let tlm = textView.textLayoutManager, let tcm = tlm.textContentManager else { return }
+        let doc = tlm.documentRange
+        tlm.removeRenderingAttribute(.foregroundColor, for: doc)
+        for (r, color) in runs where r.length > 0 {
+            guard let start = tcm.location(doc.location, offsetBy: r.location),
+                  let end = tcm.location(start, offsetBy: r.length),
+                  let textRange = NSTextRange(location: start, end: end) else { continue }
+            tlm.addRenderingAttribute(.foregroundColor, value: color, for: textRange)
+        }
+    }
+
     /// Underlines diagnostic ranges using TextKit 2 rendering attributes, which
     /// decorate the text without editing it (and without touching undo).
     func showDiagnostics(_ ranges: [(NSRange, NSColor)]) {

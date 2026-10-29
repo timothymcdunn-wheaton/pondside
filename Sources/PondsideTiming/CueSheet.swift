@@ -25,7 +25,15 @@ public struct CueSheet: Codable, Sendable, Hashable {
         public var handler: String
         /// Where the cue is written; absent for generated cues (Lexicon sounds).
         public var source: TimingLog.Row.Origin?
+        /// For a Lexicon entry's cue: the entry, and its `[sound]` params
+        /// evaluated with the cue's real timing.
+        public var entry: String?
+        public var params: [String: Double]?
     }
+
+    /// Evaluates an entry's sound params: (entry, params as written, beatDur,
+    /// spanDur, tempo) → values. Supplied by whoever has the Lexicon.
+    public typealias SoundParams = @Sendable (String, String, Double, Double, Double) -> [String: Double]?
 
     public struct TempoStep: Codable, Sendable, Hashable {
         public var moment: String
@@ -52,7 +60,8 @@ public struct CueSheet: Codable, Sendable, Hashable {
     public var duration: Double?
     public var warnings: [String]
 
-    public init(log: TimingLog, score: String, sampleRate: Int = 48000, cuePrefix: String = "cue ") {
+    public init(log: TimingLog, score: String, sampleRate: Int = 48000, cuePrefix: String = "cue ",
+                soundParams: SoundParams? = nil) {
         let map = TempoMap(log)
         func position(_ moment: Rational, _ bar: Int, _ inBar: Rational?) -> Position {
             var beat: Double?
@@ -69,10 +78,19 @@ public struct CueSheet: Codable, Sendable, Hashable {
             let n = occurrences[name, default: 0]
             occurrences[name] = n + 1
             let seconds = map.seconds(at: t.moment)
-            cues.append(Cue(id: n == 0 ? "cue-\(name)" : "cue-\(name)-\(n + 1)", name: name, index: i + 1,
-                            position: position(t.moment, t.bar, t.measurePosition),
-                            seconds: seconds, samples: Int((seconds * Double(sampleRate)).rounded()),
-                            handler: CueSheet.handlerName(name), source: t.origin))
+            var cue = Cue(id: n == 0 ? "cue-\(name)" : "cue-\(name)-\(n + 1)", name: name, index: i + 1,
+                          position: position(t.moment, t.bar, t.measurePosition),
+                          seconds: seconds, samples: Int((seconds * Double(sampleRate)).rounded()),
+                          handler: CueSheet.handlerName(name), source: t.origin)
+            for row in log.rows where row.moment == t.moment {
+                guard case let .lexicon(c, entry, span, params) = row.kind, c == name else { continue }
+                cue.entry = entry
+                let tempo = map.quartersPerMinute(at: t.moment)
+                let spanDur = map.seconds(at: t.moment + span) - seconds
+                cue.params = soundParams?(entry, params, 60 / tempo, spanDur, tempo)
+                break
+            }
+            cues.append(cue)
         }
         var warnings: [String] = map.conflicts.map {
             "two different tempos at moment \($0): a hidden \\playTempo must not share a moment with a printed \\tempo"

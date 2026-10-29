@@ -1,0 +1,53 @@
+schema   = 1
+id       = "squiggle"
+version  = "1.0.0"
+gloss    = "An irregular wavy line: trill-like or nervous, its width and pace by envelopes"
+tags     = ["graphic", "line", "squiggle", "trill", "gesture"]
+kind     = "graphic"
+lilypond = ">=2.24"
+license  = "CC0-1.0"
+
+[entry]
+command   = "s1\\startGraphic \"squiggle\" #'((width . (linear 0.2 1))) s1\\stopGraphic"
+attaches  = "span"
+music-arg = false
+
+[params.width]
+type    = "envelope"
+default = 0.5
+doc     = "Half-height of the wiggle, staff spaces, over the span"
+
+[params.centre]
+type    = "envelope"
+default = 0
+doc     = "Where it runs, staff spaces from the middle line (an envelope: it can rise)"
+
+[params.pace]
+type    = "float"
+default = 1.2
+min     = 0.3
+max     = 10.0
+doc     = "Wiggles per staff space"
+
+[params.jitter]
+type    = "float"
+default = 0.3
+min     = 0.0
+max     = 1.0
+doc     = "0 regular, 1 nervous and uneven"
+
+[params.thickness]
+type    = "float"
+default = 0.12
+min     = 0.02
+max     = 0.5
+doc     = "Line thickness, staff spaces"
+
+[params.seed]
+type    = "int"
+default = 0
+doc     = "Same seed, same line"
+
+[files]
+impl   = "impl.ily"
+readme = "README.md"

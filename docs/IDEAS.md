@@ -42,14 +42,21 @@ Shared constraints:
 The page stays the primary surface. A temporary notation lens appears for the
 selected event or system, and Escape dismisses it.
 
+- **The existing score engraving and page rendering remain untouched.** The
+  lens is an additional temporary editing surface; it does not replace the
+  page, the full-score render, the provisional glyph actions or the
+  render-to-page cross-fade. LilyPond remains the authoritative engraver.
+- **The lens exists so editing is instantaneous, not waiting for the
+  engraver.** On large, complex scores such as
+  `Tests/Scores/large-graphic`, a full engraving currently takes 10–20
+  seconds. That wait is unacceptable for note entry and editing, so the lens
+  must answer at keystroke rate while LilyPond renders in the background.
 - The lens shows one system with no page breaks: a single continuous strip or
-  loupe, using the same glyphs, staff size and typography as the page.
-- It can start from a copy of the last engraving. Only the edited event or
-  measure is draft-rendered by the fast engine; the rest of the system remains
-  the exact LilyPond output. This preserves WYSIWYG without re-laying out the
-  whole system.
+  loupe, using standard glyphs, staff size and typography.
 - It opens on edit, not every selection: selection highlights the
   system, the first note/duration edit opens the lens, or an explicit key does.
+- Editing only happens by keyboard. Mouse selects where in the score to start editing; but click to add note functionality is removed, to avoid confusion. There is only one way to edit notes: through the pop-up editor lens (which opens automatically on an edit key-stroke) via the keyboard / menu items.
+- Experiment with look and feel. Let's try a modal overlay look to start. Blur the main score (which still renders in the background, with instantaneous glyph action untouched) and place lens over it. Smoothly scroll the lens to always center on the cursor. no mouse action effects the lens.
 - Edits still write minimal `TextEdit`s into the `.ly`; Escape only closes the
   lens. A background render then updates the page and cross-fades. If the render
   before the escape key is hit, the lens closes automatically.

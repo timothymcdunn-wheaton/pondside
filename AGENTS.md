@@ -2,13 +2,23 @@
 
 Pondside is a macOS LilyPond notation app with a portable core, CLI and MCP
 server. The `.ly` file is the only source of truth: the app watches and
-rewrites it, and stores no score state elsewhere.
+rewrites it, and stores no score state elsewhere. The one thing it keeps
+is a disposable cache of each score's latest engraving
+(`PondsideEngrave/RenderCache`, in `~/Library/Caches/Pondside/Renders`),
+shown on reopen while LilyPond engraves afresh.
 
-Read `docs/DESIGN.md` §8 for current milestone state before planning work.
-The status at the top of that file is stale, and the `README.md` module
-table still calls Timing/Lexicon/Bridge placeholders. CLI, MCP,
+Read `docs/DESIGN.md` before planning work: §0 has the principles, §7–8
+the graphics kit and the agent workflow, §9 what remains. CLI, MCP,
 `cues.json`, `pondside.toml` and the RPC socket are documented in
-`docs/API.md`.
+`docs/API.md`. Pondside also keeps checkpoints of a score's files in a git
+repository of its own under `~/Library/Application Support/Pondside/History`
+(never the user's repo).
+
+Graphic notation is Lexicon entries on the graphics kit
+(`Sources/PondsideLexicon/Core/Lexicon/kit/pondside-graphics.ily`); the
+skills agents follow are in `Sources/PondsideLexicon/Core/Skills/` and are
+served by `pondside mcp`. A new graphic entry needs a compile check: render
+it (the lexicon engraving tests do) and look at it.
 
 ## Commands
 
@@ -20,7 +30,7 @@ swift test                       # engraving tests skip without LilyPond
 swift test --filter PondsideCoreTests/KeyboardAuditTests
 swift run pondside check score.ly
 scripts/make-app.sh debug        # .build/Pondside.app (macOS only)
-open .build/Pondside.app --args path/to/score.ly
+open .build/Pondside.app --args "$PWD/path/to/score.ly"   # open runs the app from /
 ```
 
 CI order is seam check → `swift build --build-tests` → `swift test
@@ -28,7 +38,12 @@ CI order is seam check → `swift build --build-tests` → `swift test
 
 ## Prerequisites and platform
 
-- Swift 6; macOS 14+ and Xcode 16+ for the app.
+- Swift 6; macOS 14+ and Xcode 16+ for the app. On macOS the app's
+  `swift-sheet-music` dependency needs Swift 6.2+ (CI and local builds use
+  6.4.1 via `swiftly`); Xcode 16's and the Command Line Tools' 6.0 cannot
+  resolve the package. `scripts/make-app.sh` picks `~/.swiftly/bin/swift`
+  when present. Don't alternate toolchains on one `.build`: 6.0 cannot read
+  the workspace state 6.4.1 writes.
 - `swift test` on macOS needs a full Xcode toolchain. With Command Line
   Tools only it fails with `no such module 'XCTest'`.
 - LilyPond must be installed for real engraving tests (PATH, Homebrew,

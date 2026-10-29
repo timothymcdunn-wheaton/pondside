@@ -1,0 +1,20 @@
+% wedge: a filled wedge; the last `dissolve` of it breaks into grains.
+#(define-graphic! "wedge"
+  (lambda (g p)
+    (let* ((rs (g-random g))
+           (w (g-width g))
+           (h0 (assq-ref p 'from)) (h1 (assq-ref p 'to)) (y (assq-ref p 'centre))
+           (gray (assq-ref p 'gray))
+           (solid-end (* w (- 1 (assq-ref p 'dissolve))))
+           (h-at (lambda (u) (+ h0 (* (- h1 h0) (if (> w 0) (/ u w) 0)))))
+           (solid (list 'gray gray (list 'wedge 0 solid-end h0 (h-at solid-end) y)))
+           (grains (if (>= solid-end w) '()
+                       (filter-map
+                        (lambda (i)
+                          (let* ((u (g-rand rs solid-end w))
+                                 (fade (/ (- u solid-end) (max 0.01 (- w solid-end))))
+                                 (h (h-at u)))
+                            (and (> (random 1.0 rs) (* 0.85 fade))
+                                 (list 'gray gray (list 'dot u (+ y (g-rand rs (- h) h)) (* 0.12 (- 1.2 fade)))))))
+                        (iota (inexact->exact (ceiling (* 30 (- w solid-end) (max 0.3 h1)))))))))
+      (cons solid grains))))

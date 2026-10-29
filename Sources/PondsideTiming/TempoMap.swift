@@ -65,6 +65,11 @@ public struct TempoMap: Sendable, Hashable {
 
     public func tempo(at moment: Rational) -> Double { steps[stepIndex(at: moment)].quartersPerMinute }
 
+    /// The tempo in force at `moment`, in quarters a minute.
+    public func quartersPerMinute(at moment: Rational) -> Double {
+        steps[stepIndex(at: moment)].quartersPerMinute
+    }
+
     public func seconds(at moment: Rational) -> Double {
         let s = steps[stepIndex(at: moment)]
         return s.seconds + Self.span(from: s.moment, to: moment, at: s.quartersPerMinute)

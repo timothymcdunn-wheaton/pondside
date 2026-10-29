@@ -17,10 +17,11 @@ public enum PondsideApplication {
 }
 
 @MainActor
-final class PondsideAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
+final class PondsideAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenuDelegate {
     private var controllers: [DocumentWindowController] = []
     var documentControllers: [DocumentWindowController] { controllers }
     private var openedFromLaunch = false
+    private let recentMenu = NSMenu(title: "Open Recent")
     private var lightsOut = UserDefaults.standard.bool(forKey: "Pondside.lightsOut")
 
     static let lilyPondTypes: [UTType] = [
@@ -35,6 +36,9 @@ final class PondsideAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemVali
         // Scripts and agents follow the app over a socket (docs/API.md).
         AppRPC.shared.app = self
         AppRPC.shared.start()
+        if let cache = ScoreDocument.renderCache {
+            Task.detached(priority: .background) { cache.prune() }
+        }
         // `PondsideApp score.ly` from a terminal or agent.
         let args = CommandLine.arguments.dropFirst().filter { !$0.hasPrefix("-") }
         for path in args { self.open(URL(fileURLWithPath: path)) }
@@ -184,6 +188,8 @@ final class PondsideAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemVali
         submenu("Pondside", [
             command("help.about"),
             .separator(),
+            item("Install Command-Line Tool…", #selector(installCommandLineTool(_:)), ""),
+            .separator(),
             item("Hide Pondside", #selector(NSApplication.hide(_:)), "h"),
             item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option]),
             item("Show All", #selector(NSApplication.unhideAllApplications(_:)), ""),
@@ -193,6 +199,10 @@ final class PondsideAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemVali
         submenu("File", [
             command("file.new"),
             command("file.open"),
+            openRecentItem(),
+            .separator(),
+            command("file.engravingSettings"),
+            command("file.lilypond"),
             .separator(),
             command("file.exportPDF"),
             command("file.reveal"),
@@ -234,6 +244,89 @@ final class PondsideAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemVali
 
 extension PondsideAppDelegate: CommandResponder {
     /// Reached when no window handles a command (e.g. none is open).
+    // MARK: The command-line tool
+
+    /// Links `pondside` into ~/.local/bin: no admin rights, nothing written
+    /// outside the user's home (DESIGN.md, Appendix A.11).
+    @objc func installCommandLineTool(_ sender: Any?) {
+        let alert = NSAlert()
+        guard let tool = Bundle.main.resourceURL?.appendingPathComponent("pondside"),
+              FileManager.default.isExecutableFile(atPath: tool.path) else {
+            alert.messageText = "The command-line tool isn't in this build"
+            alert.runModal()
+            return
+        }
+        let bin = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin")
+        let link = bin.appendingPathComponent("pondside")
+        do {
+            try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+            if (try? FileManager.default.destinationOfSymbolicLink(atPath: link.path)) != nil || FileManager.default.fileExists(atPath: link.path) {
+                try FileManager.default.removeItem(at: link)
+            }
+            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: tool)
+            let onPath = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").contains { $0 == bin.path }
+            alert.messageText = "Installed pondside"
+            alert.informativeText = "\(link.path) → \(tool.path)"
+                + (onPath ? "" : "\n\n~/.local/bin isn't on your PATH yet. Add this to ~/.zshrc:\nexport PATH=\"$HOME/.local/bin:$PATH\"")
+        } catch {
+            alert.messageText = "Couldn't install pondside"
+            alert.informativeText = error.localizedDescription
+        }
+        alert.runModal()
+    }
+
+    // MARK: Open Recent
+    //
+    // macOS keeps the list (noteNewRecentDocumentURL on every open, shared
+    // with the Dock menu); the submenu is rebuilt from it each time it opens.
+
+    private func openRecentItem() -> NSMenuItem {
+        let item = NSMenuItem(title: "Open Recent", action: nil, keyEquivalent: "")
+        recentMenu.delegate = self
+        recentMenu.autoenablesItems = false
+        item.submenu = recentMenu
+        return item
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu === recentMenu else { return }
+        menu.removeAllItems()
+        let fm = FileManager.default
+        let urls = NSDocumentController.shared.recentDocumentURLs.filter { fm.fileExists(atPath: $0.path) }
+        // Same-named scores in different folders get their folder too.
+        let names = Dictionary(grouping: urls, by: \.lastPathComponent)
+        for url in urls {
+            var title = url.lastPathComponent
+            if (names[title]?.count ?? 0) > 1 { title += " — " + url.deletingLastPathComponent().lastPathComponent }
+            let item = NSMenuItem(title: title, action: #selector(openRecent(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = url
+            item.toolTip = url.path
+            item.image = NSWorkspace.shared.icon(forFile: url.path)
+            item.image?.size = NSSize(width: 16, height: 16)
+            menu.addItem(item)
+        }
+        if urls.isEmpty {
+            let none = NSMenuItem(title: "No Recent Scores", action: nil, keyEquivalent: "")
+            none.isEnabled = false
+            menu.addItem(none)
+        }
+        menu.addItem(.separator())
+        let clear = NSMenuItem(title: "Clear Menu", action: #selector(clearRecent(_:)), keyEquivalent: "")
+        clear.target = self
+        clear.isEnabled = !urls.isEmpty
+        menu.addItem(clear)
+    }
+
+    @objc private func openRecent(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        open(url)
+    }
+
+    @objc private func clearRecent(_ sender: Any?) {
+        NSDocumentController.shared.clearRecentDocuments(sender)
+    }
+
     @objc func performCommand(_ sender: Any?) {
         guard let id = (sender as? NSMenuItem)?.commandID else { return }
         runAppCommand(id)

@@ -177,3 +177,42 @@ extension MouseEntry {
         return anchors
     }
 }
+
+extension EngravedPage {
+    /// The page's systems as vertical bands, top to bottom. LilyPond's SVG
+    /// has no systems either, so staves are grouped by the gaps between
+    /// them: a gap clearly wider than the narrowest starts a new system. A
+    /// page of single-staff systems, where every gap is alike, is one
+    /// system per staff.
+    public static func systems(of staves: [Staff]) -> [ClosedRange<Double>] {
+        let sorted = staves.sorted { $0.top < $1.top }
+        guard let first = sorted.first else { return [] }
+        let gaps = zip(sorted, sorted.dropFirst()).map { $1.top - $0.bottom }
+        let narrowest = gaps.min() ?? 0
+        let alike = gaps.allSatisfy { $0 <= narrowest * 1.25 + 0.5 }
+        var bands: [ClosedRange<Double>] = []
+        var top = first.top, bottom = first.bottom
+        for (gap, staff) in zip(gaps, sorted.dropFirst()) {
+            if alike || gap > narrowest * 1.25 + 0.5 {
+                bands.append(top...bottom)
+                top = staff.top
+            }
+            bottom = staff.bottom
+        }
+        bands.append(top...bottom)
+        return bands
+    }
+
+    /// Every linked graphic on the system holding height `y`, with its
+    /// ledger-line reach above and below.
+    public func links(onSystemAt y: Double) -> [PointAndClickLocation] {
+        let s = staves
+        guard let band = Self.systems(of: s).first(where: { ($0.lowerBound - 6)...($0.upperBound + 6) ~= y }) else { return [] }
+        let space = s.first?.space ?? 1
+        let reach = (band.lowerBound - 4 * space)...(band.upperBound + 4 * space)
+        return graphics.compactMap { g in
+            guard let link = g.link, reach ~= g.bounds.midY else { return nil }
+            return link
+        }
+    }
+}

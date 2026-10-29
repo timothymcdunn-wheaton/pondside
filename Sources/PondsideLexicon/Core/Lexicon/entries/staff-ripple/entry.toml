@@ -1,0 +1,55 @@
+schema   = 1
+id       = "staff-ripple"
+version  = "1.0.0"
+gloss    = "Staff lines turning into curly loops whose size follows an envelope"
+tags     = ["graphic", "lines", "ripple", "electronics"]
+kind     = "graphic"
+lilypond = ">=2.24"
+license  = "CC0-1.0"
+
+[entry]
+command   = "\\startGraphic \"staff-ripple\" #'((amplitude . (swell 1 0 0.6))) s1*2 \\stopGraphic"
+attaches  = "span"
+music-arg = false
+
+[params.amplitude]
+type    = "envelope"
+default = ["swell", 1, 0, 0.5]
+doc     = "Size of the loops in staff spaces, over the span; 0 is a straight line"
+
+[params.curl]
+type    = "float"
+default = 0.8
+min     = 0.0
+max     = 2.0
+doc     = "0 waves, 1 loops, 2 tight overlapping loops"
+
+[params.wavelength]
+type    = "float"
+default = 1.2
+min     = 0.3
+max     = 6.0
+doc     = "Staff spaces from one loop to the next"
+
+[params.lines]
+type    = "int"
+default = 5
+min     = 1
+max     = 5
+doc     = "How many staff lines ripple, from the top"
+
+[params.thickness]
+type    = "float"
+default = 0.1
+min     = 0.02
+max     = 0.5
+doc     = "Line thickness, staff spaces"
+
+[params.seed]
+type    = "int"
+default = 0
+doc     = "Each line's phase comes from the seed"
+
+[files]
+impl   = "impl.ily"
+readme = "README.md"

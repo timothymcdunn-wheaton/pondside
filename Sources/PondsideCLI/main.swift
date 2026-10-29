@@ -29,15 +29,26 @@ commands:
       Create or update a SuperCollider file with one handler per cue. New
       cues get stubs; cues that left the score are commented out; code
       inside a handler is never changed.
-  lexicon list | show <id> | impl <id> | check <file.ly> | include <file.ly> [--project <dir>]
+  lexicon list | search <words> | show <id> | impl <id> [--project <dir>]
       The Lexicon in three tiers: list is tier 0 (index.json), show is
       tier 1 (entry.toml and README), impl is tier 2 (the implementation).
-      check finds \\lexicon uses with unknown entries or bad params; include
-      writes the settings file that defines \\lexicon for a score.
-  mockup <file.ly> [--out <file.wav>] [--rate <hz>] [--renderer musescore|fluidsynth] [--soundfont <sf2>]
+  lexicon check <file.ly> | include <file.ly> | lock <file.ly>
+      check finds \\lexicon and \\startGraphic uses with unknown entries or bad
+      params, in every file of the score; include writes lexicon.ily, which
+      defines them; lock records the versions used in the score.
+  lexicon drafts | promote <id> [--to user] | discard <id> [--project <dir>]
+      Entries an agent proposed: list them, accept one into the project's
+      (or your) Lexicon, or delete it. Only people promote drafts.
+  history <file.ly> [--show <rev> [--file <f>]] [--restore <rev>]
+      Pondside's checkpoints of the score's files (kept apart from your own
+      git repository): list them, print a file at one, or restore one
+      (the current state is checkpointed first).
+  mockup <file.ly> [--out <file.wav>] [--rate <hz>] [--renderer musescore|fluidsynth] [--soundfont <sf2>] [--stems]
       Render the score's MIDI (it needs a \\midi block) to audio for the
       patch to play cues against: MuseScore 4 first, fluidsynth as the
-      fallback. Silent renders and wrong sample rates are refused.
+      fallback. Silent renders and wrong sample rates are refused. The
+      file is padded with silence to the score's end mark. --stems also
+      writes one file per staff (piece-<staff>.wav), to mute live parts.
   completion zsh|bash
       Print a completion script: eval "$(pondside completion zsh)".
   rpc <method> [<json params>]
@@ -251,7 +262,9 @@ func cueSheet(_ args: Arguments) async throws -> CueSheet {
         return v
     } ?? config.sampleRate
     let log = try await TimingDump.run(lily, source: source)
-    return CueSheet(log: log, score: source.lastPathComponent, sampleRate: rate)
+    let lex = Lexicon.load(Lexicon.standardScopes(project: source.deletingLastPathComponent()))
+    return CueSheet(log: log, score: source.lastPathComponent, sampleRate: rate,
+                    soundParams: { lex.soundParams(entry: $0, params: $1, beatDur: $2, spanDur: $3, tempo: $4) })
 }
 
 func cues(_ args: Arguments) async throws -> Int32 {
@@ -296,7 +309,9 @@ func handlers(_ args: Arguments) async throws -> Int32 {
 }
 
 func lexiconCommand(_ args: Arguments) throws -> Int32 {
-    guard let sub = args.positional.first else { throw CLIError("lexicon needs list, show, impl, check or include") }
+    guard let sub = args.positional.first else {
+        throw CLIError("lexicon needs list, search, show, impl, check, include, drafts, promote, discard or lock")
+    }
     let target = args.positional.dropFirst().first
     let scoreDir = target.flatMap { t -> URL? in
         t.hasSuffix(".ly") || t.hasSuffix(".ily") ? URL(fileURLWithPath: t).deletingLastPathComponent() : nil
@@ -312,21 +327,75 @@ func lexiconCommand(_ args: Arguments) throws -> Int32 {
         guard let id = target else { throw CLIError("lexicon \(sub) needs an entry id") }
         guard let text = sub == "show" ? lex.tier1(id) : lex.tier2(id) else { throw CLIError("no Lexicon entry \(id)") }
         print(text, terminator: text.hasSuffix("\n") ? "" : "\n")
-    case "check", "include":
+    case "search":
+        let query = args.positional.dropFirst().joined(separator: " ")
+        for line in lex.search(query, limit: 20) { print(line) }
+    case "check", "include", "lock":
         guard let path = target else { throw CLIError("lexicon \(sub) needs a score") }
-        let text = try String(contentsOf: URL(fileURLWithPath: path), encoding: .utf8)
+        // Every file of the score: uses in included parts count too.
+        let graph = SourceGraph.load(root: URL(fileURLWithPath: path).standardizedFileURL)
         if sub == "check" {
-            let problems = lex.check(text)
-            for p in problems { print("\(path):\(p.line): \(p.message)") }
-            return problems.isEmpty ? 0 : 1
+            var bad = false
+            for warning in LexiconLock.drift(in: graph.files.first?.text ?? "", lexicon: lex) { print("\(path): \(warning)") }
+            for f in graph.files {
+                for p in lex.check(f.text) { print("\(f.url.path):\(p.line): \(p.message)"); bad = true }
+            }
+            return bad ? 1 : 0
         }
-        let used = Set(LexiconUse.find(in: text).map(\.id))
+        let used = Set(graph.files.flatMap { LexiconUse.find(in: $0.text).map(\.id) })
+        if sub == "lock" {
+            // The versions this score uses, written into the root so it resolves them later.
+            let root = URL(fileURLWithPath: path)
+            let text = try String(contentsOf: root, encoding: .utf8)
+            try Data(LexiconLock.updating(text, lexicon: lex, used: used).utf8).write(to: root, options: .atomic)
+            print("locked \(used.count) entr\(used.count == 1 ? "y" : "ies") in \(root.lastPathComponent)")
+            return 0
+        }
         let out = args.options["out"] ?? URL(fileURLWithPath: path).deletingLastPathComponent().appendingPathComponent("lexicon.ily").path
         try Data(lex.includeFile(for: used).utf8).write(to: URL(fileURLWithPath: out), options: .atomic)
         print("wrote \(out) for \(used.count) entr\(used.count == 1 ? "y" : "ies")")
+    case "drafts":
+        let drafts = lex.entries.values.filter { $0.scope == .draft }.sorted { $0.entry.id < $1.entry.id }
+        if drafts.isEmpty { print("No drafts in \(Lexicon.draftsDirectory(project: project).path)") }
+        for d in drafts { print("\(d.entry.id)\t\(d.entry.version)\t\(d.entry.gloss)") }
+    case "promote":
+        guard let id = target else { throw CLIError("lexicon promote needs a draft id") }
+        let scope: Lexicon.Scope = args.options["to"] == "user" ? .user : .project
+        let dir = try Lexicon.promote(id: id, project: project, to: scope)
+        print("accepted \(id) into \(dir.path)")
+    case "discard":
+        guard let id = target else { throw CLIError("lexicon discard needs a draft id") }
+        try Lexicon.discard(id: id, project: project)
+        print("discarded the draft \(id)")
     default:
         throw CLIError("unknown lexicon command '\(sub)'")
     }
+    return 0
+}
+
+func historyCommand(_ args: Arguments) async throws -> Int32 {
+    let source = try sourceURL(args)
+    guard let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+        .appendingPathComponent("Pondside/History", isDirectory: true) else { throw CLIError("no Application Support folder") }
+    let history = ShadowHistory(score: source, root: root)
+    if let rev = args.options["show"] {
+        let file = args.options["file"].map { URL(fileURLWithPath: $0) } ?? source
+        print(try await history.text(of: file, at: rev), terminator: "")
+        return 0
+    }
+    if let rev = args.options["restore"] {
+        let files = SourceGraph.load(root: source).files.map(\.url)
+        try await history.checkpoint(files, message: "before restoring \(rev)")
+        for f in files {
+            guard let text = try? await history.text(of: f, at: rev) else { continue }
+            try Data(text.utf8).write(to: f, options: .atomic)
+            print("restored \(f.lastPathComponent) from \(rev)")
+        }
+        return 0
+    }
+    let checkpoints = try await history.checkpoints()
+    if checkpoints.isEmpty { print("No checkpoints yet: Pondside makes them as you edit.") }
+    for c in checkpoints { print("\(c.revision)\t\(c.date)\t\(c.message)") }
     return 0
 }
 
@@ -352,8 +421,35 @@ func mockup(_ args: Arguments) async throws -> Int32 {
     let out = URL(fileURLWithPath: args.options["out"]
         ?? source.deletingPathExtension().appendingPathExtension("wav").path)
     let renderer = MockupRenderer(sampleRate: rate, soundFont: args.options["soundfont"].map { URL(fileURLWithPath: $0) } ?? config.soundFont)
+    // The piece lasts until its `end` mark, which may be after the last note.
+    let end = (try? await TimingDump.run(lily, source: source)).flatMap { log in log.end.map { TempoMap(log).seconds(at: $0) } }
+    func finish(_ file: URL, _ used: MockupRenderer.Renderer, _ info: WAVInfo) {
+        var seconds = info.seconds
+        if let end, (try? AudioFiles.padWAV(file, toSeconds: end)) == true { seconds = end }
+        print("\(file.path): \(String(format: "%.1f", seconds)) s at \(info.sampleRate) Hz via \(used.rawValue), peak \(String(format: "%.1f", 20 * log10(info.peak))) dBFS")
+    }
     let (used, info) = try await renderer.render(midi: midi, to: out, only: only)
-    print("\(out.path): \(String(format: "%.1f", info.seconds)) s at \(info.sampleRate) Hz via \(used.rawValue), peak \(String(format: "%.1f", 20 * log10(info.peak))) dBFS")
+    finish(out, used, info)
+    // --stems: one file per staff, so a patch can mute the parts played live.
+    if args.flags.contains("stems"), let data = try? Data(contentsOf: midi), let (_, tracks) = AudioFiles.midiTracks(data) {
+        for i in tracks.indices.dropFirst() {
+            guard let stem = AudioFiles.midi(data, keepingTrack: i) else { continue }
+            // LilyPond names a track "staff:voice"; the staff names the stem.
+            let staff = tracks[i].name.split(separator: ":").first.map(String.init) ?? ""
+            let name = staff.isEmpty ? "track\(i)" : staff.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: " ", with: "-")
+            let stemMidi = scratch.appendingPathComponent("stem-\(i).midi")
+            try stem.write(to: stemMidi)
+            let file = URL(fileURLWithPath: out.deletingPathExtension().path + "-\(name).wav")
+            do {
+                let (u, inf) = try await renderer.render(midi: stemMidi, to: file, only: only)
+                finish(file, u, inf)
+            } catch where "\(error)".contains("silence") {
+                print("stem \(name): no sound (skips only), not written")
+            } catch {
+                printErr("stem \(name): \(error)")
+            }
+        }
+    }
     return 0
 }
 
@@ -439,7 +535,8 @@ let command = argv.count > 1 ? argv[1] : "help"
 let rest = argv.dropFirst(2)
 
 do {
-    let args = try Arguments(rest, valued: ["format", "out", "on-change", "rate", "scd", "project", "renderer", "soundfont"])
+    let args = try Arguments(rest, valued: ["format", "out", "on-change", "rate", "scd", "project", "renderer", "soundfont",
+                                            "to", "show", "file", "restore"])
     let status: Int32
     switch command {
     case "render": status = try await render(args)
@@ -451,6 +548,7 @@ do {
     case "timeline": status = try await timeline(args)
     case "handlers": status = try await handlers(args)
     case "lexicon": status = try lexiconCommand(args)
+    case "history": status = try await historyCommand(args)
     case "completion": status = try completion(args)
     case "mockup": status = try await mockup(args)
     case "rpc":

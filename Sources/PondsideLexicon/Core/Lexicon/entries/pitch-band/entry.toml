@@ -1,0 +1,39 @@
+schema   = 1
+id       = "pitch-band"
+version  = "1.0.0"
+gloss    = "A shaded band between two staff positions: a cluster or register over time"
+tags     = ["graphic", "cluster", "band", "register", "pitch"]
+kind     = "graphic"
+lilypond = ">=2.24"
+license  = "CC0-1.0"
+
+[entry]
+command   = "s1\\startGraphic \"pitch-band\" #'((low . -4) (high . 2)) s1*2\\stopGraphic"
+attaches  = "span"
+music-arg = false
+
+[params.low]
+type    = "envelope"
+default = -2
+doc     = "Lower edge in staff positions (half spaces) from the middle line: -4 is the bottom line"
+
+[params.high]
+type    = "envelope"
+default = 2
+doc     = "Upper edge in staff positions; envelopes make the band move or fan out"
+
+[params.gray]
+type    = "float"
+default = 0.7
+min     = 0.0
+max     = 0.95
+doc     = "0 black, 0.9 very light"
+
+[params.outline]
+type    = "bool"
+default = true
+doc     = "Draw the edges in black over the shading"
+
+[files]
+impl   = "impl.ily"
+readme = "README.md"

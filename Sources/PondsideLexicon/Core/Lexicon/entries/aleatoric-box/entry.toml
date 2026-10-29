@@ -1,0 +1,46 @@
+schema   = 1
+id       = "aleatoric-box"
+version  = "1.0.0"
+gloss    = "A box around a span of music, with a label: repeat, improvise, until cue"
+tags     = ["graphic", "box", "aleatoric", "repeat", "improvisation"]
+kind     = "graphic"
+lilypond = ">=2.24"
+license  = "CC0-1.0"
+
+[entry]
+command   = "c''4\\startGraphic \"aleatoric-box\" #'((label . \"repeat until cue 3\")) d'' e'' f''\\stopGraphic"
+attaches  = "span"
+music-arg = false
+
+[params.label]
+type    = "markup"
+default = ""
+doc     = "Text above the box's top left, e.g. \"repeat until cue 3\" or \"ca. 8″\""
+
+[params.top]
+type    = "float"
+default = 3.5
+doc     = "Top edge, staff spaces from the middle line"
+
+[params.bottom]
+type    = "float"
+default = -3.5
+doc     = "Bottom edge, staff spaces from the middle line"
+
+[params.thickness]
+type    = "float"
+default = 0.16
+min     = 0.04
+max     = 0.6
+doc     = "Line thickness, staff spaces"
+
+[params.padding]
+type    = "float"
+default = 0.6
+min     = 0.0
+max     = 3.0
+doc     = "Room before the first note and after the last, staff spaces"
+
+[files]
+impl   = "impl.ily"
+readme = "README.md"

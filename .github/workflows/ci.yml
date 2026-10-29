@@ -75,6 +75,13 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+      - name: Install Swift 6.4.1
+        run: |
+          brew install swiftly
+          swiftly init --skip-install --assume-yes
+          swiftly install 6.4.1
+          swiftly use 6.4.1
+          echo "$HOME/.swiftly/bin" >> "$GITHUB_PATH"
       - name: Toolchain
         run: swift --version
       - name: Build (all targets, including the app)

@@ -39,9 +39,15 @@ var targets: [Target] = [
 // macOS only. Treated as disposable: a port replaces these two targets.
 products.append(.executable(name: "PondsideApp", targets: ["PondsideApp"]))
 dependencies.append(.package(url: "https://github.com/migueldeicaza/SwiftTerm", .upToNextMinor(from: "1.5.1")))
+dependencies.append(.package(url: "https://github.com/jiyimeta/swift-sheet-music", exact: "4.11.0"))
 targets += [
     .target(name: "PondsideUI", dependencies: ["PondsideCore", "PondsideEngrave", "PondsideTiming", "PondsideLexicon", "PondsideBridge",
-                                               .product(name: "SwiftTerm", package: "SwiftTerm")]),
+                                               .product(name: "SwiftTerm", package: "SwiftTerm"),
+                                               .product(name: "SheetMusicCore", package: "swift-sheet-music"),
+                                               .product(name: "SheetMusicMusicXML", package: "swift-sheet-music"),
+                                               .product(name: "SheetMusicLayout", package: "swift-sheet-music"),
+                                               .product(name: "SheetMusicLayoutApple", package: "swift-sheet-music"),
+                                               .product(name: "SheetMusicUI", package: "swift-sheet-music")]),
     .executableTarget(name: "PondsideApp", dependencies: ["PondsideUI"]),
 ]
 #endif

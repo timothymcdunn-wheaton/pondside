@@ -13,6 +13,10 @@ final class StatusBarView: NSView {
     private var baseStatus = ""
     private var rightText = ""
     private var inputText = ""
+    private var engravingTask: Task<Void, Never>?
+    private var isEngraving = false
+    /// Dots of "Engraving..." drawn at full strength; 3 when not animating.
+    private var ellipsisPhase = 3
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -71,24 +75,79 @@ final class StatusBarView: NSView {
         return l
     }
 
-    func set(status: CompileStatus, detail: String?, zoom: CGFloat, toolchain: String, note: String?) {
+    /// `stale`: the pages are the last session's engraving, from the cache.
+    func set(status: CompileStatus, detail: String?, zoom: CGFloat, toolchain: String, note: String?, stale: Bool = false) {
         let color: NSColor
         switch status {
         case .idle: baseStatus = "Ready"; color = Theme.secondaryText
         case .noLilyPond: baseStatus = "LilyPond not found — install it (brew install lilypond)"; color = Theme.warning
-        case .compiling: baseStatus = "Engraving…"; color = Theme.accent
+        case .compiling: baseStatus = stale ? "Last engraving · Engraving..." : "Engraving..."; color = Theme.accent
         case .clean(let ms): baseStatus = "Clean · \(ms) ms"; color = Theme.accent.withAlphaComponent(0.55)
         case .errors(let n): baseStatus = "\(n) error\(n == 1 ? "" : "s")" + (detail.map { " — \($0)" } ?? ""); color = Theme.error
         case .failed(let why): baseStatus = why; color = Theme.error
         }
         dot.layer?.backgroundColor = color.cgColor
-        if flashTask == nil { statusLabel.stringValue = baseStatus }
+        dot.setAccessibilityLabel(baseStatus)
+        setEngraving(status == .compiling)
+        renderStatus()
         statusLabel.toolTip = detail
         var right = "\(Int((zoom * 100).rounded()))%   \(toolchain)"
         if let note { right = note + "   " + right }
         rightText = right
         renderRight()
         rightLabel.toolTip = "Zoom: ⌘= / ⌘- / ⌘0 fit width. Toolchain: the LilyPond this score compiles with."
+    }
+
+    /// While LilyPond works the dot pulses and the ellipsis fills in, as an
+    /// indeterminate progress indicator (HIG Loading). Most renders take a
+    /// few hundred milliseconds and come keystroke after keystroke, so the
+    /// motion starts only once one runs past 300 ms (HIG Motion: little
+    /// motion for frequent events); Reduce Motion keeps both still.
+    private func setEngraving(_ on: Bool) {
+        guard on != isEngraving else { return }
+        isEngraving = on
+        engravingTask?.cancel()
+        engravingTask = nil
+        dot.layer?.removeAnimation(forKey: "pondside.engraving")
+        ellipsisPhase = 3
+        guard on, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        engravingTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled, let self else { return }
+            let pulse = CABasicAnimation(keyPath: "opacity")
+            pulse.fromValue = 1
+            pulse.toValue = 0.3
+            pulse.duration = 0.6
+            pulse.autoreverses = true
+            pulse.repeatCount = .infinity
+            pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            self.dot.layer?.add(pulse, forKey: "pondside.engraving")
+            var phase = 0
+            while !Task.isCancelled {
+                self.ellipsisPhase = phase
+                self.renderStatus()
+                phase = (phase + 1) % 4
+                try? await Task.sleep(for: .milliseconds(350))
+            }
+        }
+    }
+
+    /// The status text. "Engraving..." keeps all three dots and only
+    /// dims the ones not yet reached, so its width never changes.
+    private func renderStatus() {
+        guard flashTask == nil else { return }
+        guard isEngraving, baseStatus.hasSuffix("...") else {
+            statusLabel.stringValue = baseStatus
+            return
+        }
+        let font = Theme.secondaryFont
+        let text = NSMutableAttributedString(string: String(baseStatus.dropLast(3)),
+                                             attributes: [.font: font, .foregroundColor: Theme.secondaryText])
+        for i in 0..<3 {
+            let color = i < ellipsisPhase ? Theme.secondaryText : Theme.secondaryText.withAlphaComponent(0.25)
+            text.append(NSAttributedString(string: ".", attributes: [.font: font, .foregroundColor: color]))
+        }
+        statusLabel.attributedStringValue = text
     }
 
     /// Note-input state: the armed duration and any half-typed input.
@@ -155,7 +214,7 @@ final class StatusBarView: NSView {
             try? await Task.sleep(for: .seconds(4))
             guard !Task.isCancelled, let self else { return }
             self.flashTask = nil
-            self.statusLabel.stringValue = self.baseStatus
+            self.renderStatus()
         }
     }
 }

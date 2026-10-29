@@ -1,0 +1,51 @@
+schema   = 1
+id       = "grain-cloud"
+version  = "1.0.0"
+gloss    = "Grainy texture: seeded dots in a band whose height and centre follow envelopes"
+tags     = ["graphic", "texture", "grains", "electronics", "aleatoric"]
+kind     = "graphic"
+lilypond = ">=2.24"
+license  = "CC0-1.0"
+
+[entry]
+command   = "s1*2 \\startGraphic \"grain-cloud\" #'((height . (swell 2 0.5 2))) s1*4 \\stopGraphic"
+attaches  = "span"
+music-arg = false
+
+[params.density]
+type    = "float"
+default = 0.6
+min     = 0.0
+max     = 4.0
+doc     = "Dots per square staff space, divided by four: 1 is dense, 0.2 sparse"
+
+[params.height]
+type    = "envelope"
+default = ["constant", 1.5]
+doc     = "Half-height of the band in staff spaces, over the span: (swell 3 0.5 4) expands and contracts three times"
+
+[params.centre]
+type    = "envelope"
+default = 0
+doc     = "Where the band sits, in staff spaces from the middle line"
+
+[params.size]
+type    = "float"
+default = 0.12
+min     = 0.02
+max     = 0.6
+doc     = "Largest dot radius, staff spaces"
+
+[params.avoid]
+type    = "list"
+default = []
+doc     = "Grob interfaces to keep clear of, e.g. (note-head-interface accidental-interface)"
+
+[params.seed]
+type    = "int"
+default = 0
+doc     = "Same seed, same drawing"
+
+[files]
+impl   = "impl.ily"
+readme = "README.md"

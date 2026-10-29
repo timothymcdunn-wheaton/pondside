@@ -12,13 +12,6 @@ protocol ScoreCanvasDelegate: AnyObject {
     func canvasClickedUnlinkedMusic(_ canvas: ScoreCanvasView)
     /// A key pressed while the score has focus. Return true if handled.
     func canvas(_ canvas: ScoreCanvasView, handleKey event: NSEvent) -> Bool
-    /// Whether clicking an empty staff places a note (a duration is armed).
-    func canvasWantsMouseEntry(_ canvas: ScoreCanvasView) -> Bool
-    /// A click on empty staff space while mouse entry is wanted.
-    func canvas(_ canvas: ScoreCanvasView, clickedStaff staff: Staff, at point: Point, on page: EngravedPage)
-    /// Mouse entry was wanted but the click found no staff; `stavesOnPage`
-    /// is how many staves the page has (0: none could be recognised).
-    func canvas(_ canvas: ScoreCanvasView, missedStaffWith stavesOnPage: Int)
 }
 
 /// The score surface: pages floating on the dark field.
@@ -145,10 +138,27 @@ final class ScoreCanvasView: NSView {
 
     // MARK: Highlighting
 
+    /// The first highlighted glyphs widened to their staff, in canvas
+    /// coordinates: what a popover about the selection must not cover.
+    private(set) var selectionAnchor: NSRect?
+
+    /// The linked positions on the system around the selection: what "this
+    /// system" means for an agent placing something "until the next system".
+    func linksOnSelectedSystem() -> [PointAndClickLocation] {
+        guard let anchor = selectionAnchor else { return [] }
+        for v in pageViews {
+            let r = v.convert(anchor, from: self)
+            guard v.bounds.intersects(r), let page = v.rendered?.page else { continue }
+            return page.links(onSystemAt: v.pagePoint(NSPoint(x: r.midX, y: r.midY)).y)
+        }
+        return []
+    }
+
     /// Highlights every graphic produced by the given source positions.
     /// The highlight is an overlay; the music itself is never recoloured.
     func highlight(_ positions: Set<SourcePosition>, path: String?, reveal: Bool) {
         var firstRect: NSRect?
+        selectionAnchor = nil
         var sameFile: [String: Bool] = [:]
         for v in pageViews {
             guard let page = v.rendered?.page else { continue }
@@ -164,6 +174,12 @@ final class ScoreCanvasView: NSView {
             v.highlights = matches.map(\.bounds)
             if firstRect == nil, let r = EngravedPage.bounds(of: matches) {
                 firstRect = convert(v.viewRect(for: r), from: v)
+                var band = r
+                if let staff = page.staff(at: Point(r.midX, r.midY), among: v.staves) {
+                    let top = min(r.y, staff.top - staff.space), bottom = max(r.y + r.height, staff.bottom + staff.space)
+                    band = Rect(x: r.x, y: top, width: r.width, height: bottom - top)
+                }
+                selectionAnchor = convert(v.viewRect(for: band), from: v)
             }
         }
         if reveal, let r = firstRect, !visibleRect.contains(r) {
@@ -177,15 +193,6 @@ final class ScoreCanvasView: NSView {
         window?.makeFirstResponder(self)
         let tolerance = 0.3 / max(zoom, 0.5)
         let link = v.rendered?.page.hitTest(p, tolerance: tolerance, excluding: v.removed)?.link
-        if link == nil, let page = v.rendered?.page, delegate?.canvasWantsMouseEntry(self) == true {
-            guard let staff = page.staff(at: p, among: v.staves) else {
-                delegate?.canvas(self, missedStaffWith: v.staves.count)
-                return
-            }
-            v.ghost = nil
-            delegate?.canvas(self, clickedStaff: staff, at: p, on: page)
-            return
-        }
         if link == nil, let page = v.rendered?.page,
            page.graphics.contains(where: { $0.bounds.insetBy(-tolerance).contains(p) && $0.bounds.width < page.viewBox.width * 0.5 }) {
             // Something is there, but it can't lead back to the source.
@@ -193,35 +200,6 @@ final class ScoreCanvasView: NSView {
             return
         }
         delegate?.canvas(self, didClick: link, extending: event.modifierFlags.contains(.shift))
-    }
-
-    /// Mouse entry preview: a ghost notehead where a click would place one.
-    fileprivate func pageView(_ v: PageView, hoverAt p: Point?) {
-        guard let p, delegate?.canvasWantsMouseEntry(self) == true, let page = v.rendered?.page,
-              page.hitTest(p, tolerance: 0.3 / max(zoom, 0.5)) == nil,
-              let staff = page.staff(at: p, among: v.staves) else {
-            v.ghost = nil
-            return
-        }
-        v.ghost = Ghost(staff: staff, x: p.x, position: staff.position(ofY: p.y),
-                        glyph: sampleGlyph(on: staff, page: page, near: p.x))
-    }
-
-    /// A real notehead on the staff to use as the mouse-entry template. The
-    /// nearest one is best: its spacing and glyph weight belong to this staff.
-    private func sampleGlyph(on staff: Staff, page: EngravedPage, near x: Double) -> NoteGlyph? {
-        let band = staff.band()
-        var byPosition: [SourcePosition: [Graphic]] = [:]
-        for g in page.graphics {
-            guard let link = g.link, band.contains(Point(g.bounds.midX, g.bounds.midY)) else { continue }
-            byPosition[link.position, default: []].append(g)
-        }
-        var best: NoteGlyph?
-        for graphics in byPosition.values {
-            guard let glyph = EngravedPage.noteGlyph(among: graphics, space: staff.space) else { continue }
-            if best == nil || abs(glyph.head.midX - x) < abs(best!.head.midX - x) { best = glyph }
-        }
-        return best
     }
 
     /// Provisional rendering: ghost noteheads where the given notes are
@@ -324,11 +302,6 @@ final class ScoreCanvasView: NSView {
         }
     }
 
-    /// Drops any mouse entry preview (the armed duration was cleared).
-    func clearGhost() {
-        pageViews.forEach { $0.ghost = nil }
-    }
-
     fileprivate func pageView(_ v: PageView, selected rect: Rect) {
         let links = v.rendered?.page.linkedGraphics(in: rect, excluding: v.removed).compactMap(\.link) ?? []
         delegate?.canvas(self, didSelect: links)
@@ -363,14 +336,6 @@ final class ScoreCanvasView: NSView {
     }
 }
 
-private struct Ghost: Equatable {
-    var staff: Staff
-    var x: Double
-    var position: Int
-    /// The real engraved notehead (and stem, flags, dot) used as the preview.
-    var glyph: NoteGlyph?
-}
-
 /// One sheet of paper. Opaque: nothing ever shows through the music.
 @MainActor
 private final class PageView: NSView {
@@ -378,7 +343,6 @@ private final class PageView: NSView {
     var rendered: RenderedPage? {
         didSet {
             staves = rendered?.page.staves ?? []
-            ghost = nil
             provisional = []
             removed = []
             highlights = []
@@ -387,7 +351,6 @@ private final class PageView: NSView {
         }
     }
     private(set) var staves: [Staff] = []
-    var ghost: Ghost? { didSet { if ghost != oldValue { needsDisplay = true } } }
     /// Engraved note glyphs moved to provisional (not yet engraved) positions.
     var provisional: [NoteGlyph] = [] { didSet { if provisional != oldValue { needsDisplay = true } } }
     /// Glyphs the provisional deletion has taken out of the page.
@@ -483,7 +446,6 @@ private final class PageView: NSView {
         // Provisional marks use ink, not the accent: the preview is meant to
         // look like the engraving that is about to land, not like a UI ghost.
         let ink = NSColor.black
-        if let ghost { drawGhost(ghost, in: ctx, color: ink) }
         if !provisional.isEmpty {
             ctx.saveGState()
             ctx.scaleBy(x: s, y: s)
@@ -523,41 +485,6 @@ private final class PageView: NSView {
     }
 
     /// The note a click would place, with any ledger lines it needs.
-    /// A real engraved glyph in the accent colour: the music underneath is
-    /// never recoloured.
-    private func drawGhost(_ ghost: Ghost, in ctx: CGContext, color: NSColor) {
-        let staff = ghost.staff, space = staff.space
-        let y = staff.y(ofPosition: ghost.position)
-
-        if let glyph = ghost.glyph, let vb = rendered?.page.viewBox {
-            let placed = glyph.placingHead(at: Point(ghost.x, y))
-            ctx.saveGState()
-            ctx.scaleBy(x: scale, y: scale)
-            ctx.translateBy(x: -vb.x, y: -vb.y)
-            for graphic in placed.graphics {
-                RenderedPage.draw(graphic, in: ctx, tint: color, alpha: 0.55)
-            }
-            drawLedgers(for: placed, in: ctx, color: color)
-            ctx.restoreGState()
-            return
-        }
-
-        let head = viewRect(for: Rect(x: ghost.x - 0.65 * space, y: y - 0.5 * space, width: 1.3 * space, height: space))
-        ctx.setFillColor(color.withAlphaComponent(0.55).cgColor)
-        ctx.fillEllipse(in: head)
-        ctx.setStrokeColor(color.withAlphaComponent(0.7).cgColor)
-        ctx.setLineWidth(max(1, 0.12 * space * scale))
-        var ledgers: [Int] = []
-        if ghost.position <= -2 { ledgers = Array(stride(from: -2, through: ghost.position, by: -2)) }
-        if ghost.position >= 10 { ledgers = Array(stride(from: 10, through: ghost.position, by: 2)) }
-        for p in ledgers {
-            let r = viewRect(for: Rect(x: ghost.x - space, y: staff.y(ofPosition: p), width: 2 * space, height: 0))
-            ctx.move(to: CGPoint(x: r.minX, y: r.minY))
-            ctx.addLine(to: CGPoint(x: r.maxX, y: r.minY))
-        }
-        ctx.strokePath()
-    }
-
     /// Ledger lines at a provisional glyph's position. The page transform must
     /// already be in effect (page coordinates, y down).
     private func drawLedgers(for glyph: NoteGlyph, in ctx: CGContext, color: NSColor) {
@@ -577,25 +504,6 @@ private final class PageView: NSView {
             ctx.addLine(to: CGPoint(x: glyph.head.midX + staff.space, y: y))
         }
         ctx.strokePath()
-    }
-
-    private var tracking: NSTrackingArea?
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let tracking { removeTrackingArea(tracking) }
-        let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
-                                  owner: self, userInfo: nil)
-        addTrackingArea(area)
-        tracking = area
-    }
-
-    override func mouseMoved(with event: NSEvent) {
-        owner?.pageView(self, hoverAt: pagePoint(convert(event.locationInWindow, from: nil)))
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        owner?.pageView(self, hoverAt: nil)
     }
 
     override func mouseDown(with event: NSEvent) {

@@ -3,11 +3,11 @@ import Foundation
 /// One Lexicon entry: a notational idea with typed parameters, a LilyPond
 /// implementation and, optionally, the sound it stands for (DESIGN.md §3).
 public struct LexiconEntry: Hashable, Sendable {
-    public enum Kind: String, CaseIterable, Sendable { case symbol, texture, pattern, gesture, layout, system }
+    public enum Kind: String, CaseIterable, Sendable { case symbol, texture, pattern, gesture, layout, system, graphic }
     public enum Attachment: String, CaseIterable, Sendable { case point, span, staff, system }
 
     public struct Param: Hashable, Sendable {
-        public enum ParamType: String, CaseIterable, Sendable { case float, int, bool, string, `enum`, duration, pitch, markup }
+        public enum ParamType: String, CaseIterable, Sendable { case float, int, bool, string, `enum`, duration, pitch, markup, envelope, list }
         public var name: String
         public var type: ParamType
         public var defaultValue: TOMLValue?
@@ -42,6 +42,8 @@ public struct LexiconEntry: Hashable, Sendable {
     public var kind: Kind
     public var lilypond: String?
     public var attaches: Attachment
+    /// The example invocation from `[entry] command`, for previews.
+    public var command: String?
     public var musicArg: Bool
     /// In file order.
     public var params: [Param]
@@ -94,6 +96,7 @@ public struct LexiconEntry: Hashable, Sendable {
         attaches = Attachment(rawValue: attachText) ?? .point
         if Attachment(rawValue: attachText) == nil { problems.append("entry.attaches must be point, span, staff or system") }
         musicArg = entry["music-arg"]?.bool ?? (attaches == .span)
+        command = entry["command"]?.string
 
         // Params keep the order they appear in the file (TOML tables don't).
         let order = Self.tableOrder(text, under: "params")
@@ -243,6 +246,9 @@ public struct LexiconProblems: Error, Hashable, Sendable, CustomStringConvertibl
 }
 
 extension LexiconEntry.Param {
+    /// The envelopes the graphics kit understands (`env-at`).
+    static let envelopeKinds: Set<String> = ["constant", "linear", "swell", "pulse", "lfo", "points", "sum", "product", "smooth"]
+
     /// Why `v` is not a valid value, or nil.
     func reject(_ v: TOMLValue) -> String? {
         switch type {
@@ -258,6 +264,17 @@ extension LexiconEntry.Param {
             if !values.contains(s) { return "\(s) is not one of \(values.joined(separator: ", "))" }
         case .string, .markup, .duration, .pitch:
             if v.string == nil { return "expected a string" }
+        case .envelope:
+            // 2, or (swell 3 0.5 4): see the graphics kit's env-at.
+            if v.number != nil { return nil }
+            guard let a = v.array, let head = a.first?.string else {
+                return "expected a number or an envelope such as (swell 3 0.5 4)"
+            }
+            if !Self.envelopeKinds.contains(head) {
+                return "\(head) is not an envelope; use one of \(Self.envelopeKinds.sorted().joined(separator: ", "))"
+            }
+        case .list:
+            if v.array == nil { return "expected a list" }
         }
         return nil
     }

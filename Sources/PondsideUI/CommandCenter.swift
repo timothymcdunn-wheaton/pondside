@@ -50,9 +50,25 @@ final class CommandCenter {
         if let s = spec?.shortcut {
             item.keyEquivalent = Self.keyEquivalent(s)
             item.keyEquivalentModifierMask = Self.modifierFlags(s.modifiers)
+        } else if let spec, let keys = spec.keys.first ?? spec.chords.first?.description {
+            // No macOS key equivalent: show the score key or the chord where
+            // the shortcut would be, in the secondary colour, so the menu
+            // still teaches the keys (it can't type them for you).
+            item.attributedTitle = Self.titleWithKeys(spec.title, keys)
         }
         item.toolTip = spec.map { tip(for: $0) }
         return item
+    }
+
+    static func titleWithKeys(_ title: String, _ keys: String) -> NSAttributedString {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.tabStops = [NSTextTab(textAlignment: .right, location: 320)]
+        let font = NSFont.menuFont(ofSize: 0)
+        let s = NSMutableAttributedString(string: title, attributes: [.font: font, .paragraphStyle: paragraph])
+        s.append(NSAttributedString(string: "\t" + keys, attributes: [
+            .font: NSFont.menuFont(ofSize: 0), .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: paragraph,
+        ]))
+        return s
     }
 
     /// "Gloss — keys", for tool tips.

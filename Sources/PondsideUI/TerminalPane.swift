@@ -9,7 +9,11 @@ final class TerminalPane: NSView, LocalProcessTerminalViewDelegate {
     private let directory: URL
     private var startedAt = Date()
 
-    init(directory: URL) {
+    /// `command`: run first (the Agent pane's agent); the shell follows it.
+    private var command: String?
+
+    init(directory: URL, command: String? = nil) {
+        self.command = command
         self.directory = directory
         super.init(frame: .zero)
         wantsLayer = true
@@ -42,7 +46,8 @@ final class TerminalPane: NSView, LocalProcessTerminalViewDelegate {
         var env = ProcessInfo.processInfo.environment
         env["TERM"] = "xterm-256color"
         env["PONDSIDE_SCORE_DIR"] = directory.path
-        terminal.startProcess(executable: shell, args: ["-l", "-c", "cd \(quoted) && exec \(shell) -l"],
+        let first = command.map { "\($0); " } ?? ""
+        terminal.startProcess(executable: shell, args: ["-l", "-c", "cd \(quoted) && \(first)exec \(shell) -l"],
                               environment: env.map { "\($0.key)=\($0.value)" })
     }
 

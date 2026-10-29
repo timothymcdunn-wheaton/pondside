@@ -174,3 +174,69 @@ public struct MockupRenderer: Sendable {
         return info
     }
 }
+
+/// Small, exact edits to rendered audio and to LilyPond's MIDI.
+public enum AudioFiles {
+    /// Pads a PCM WAV with silence to `seconds` (the score's `end` mark),
+    /// so the mockup lasts as long as the piece. Returns whether it grew.
+    @discardableResult
+    public static func padWAV(_ url: URL, toSeconds seconds: Double) throws -> Bool {
+        var b = [UInt8](try Data(contentsOf: url))
+        func u16(_ i: Int) -> Int { Int(b[i]) | Int(b[i + 1]) << 8 }
+        func u32(_ i: Int) -> Int { u16(i) | u16(i + 2) << 16 }
+        func put32(_ v: Int, at i: Int) { for k in 0..<4 { b[i + k] = UInt8((v >> (8 * k)) & 0xFF) } }
+        guard b.count >= 12, Array(b[0..<4]) == Array("RIFF".utf8) else { return false }
+        var i = 12, channels = 0, rate = 0, bits = 0, dataAt: Int?
+        while i + 8 <= b.count {
+            let id = String(decoding: b[i..<(i + 4)], as: UTF8.self), size = u32(i + 4)
+            if id == "fmt " { channels = u16(i + 10); rate = u32(i + 12); bits = u16(i + 22) }
+            if id == "data" { dataAt = i; break }
+            i += 8 + size + (size & 1)
+        }
+        guard let dataAt, channels > 0, rate > 0, bits > 0 else { return false }
+        let frameBytes = channels * bits / 8
+        let have = u32(dataAt + 4) / frameBytes
+        let want = Int((seconds * Double(rate)).rounded(.up))
+        guard want > have else { return false }
+        let end = dataAt + 8 + have * frameBytes
+        // 8-bit PCM is unsigned: its silence is 128.
+        let silence: UInt8 = bits == 8 ? 128 : 0
+        b.insert(contentsOf: [UInt8](repeating: silence, count: (want - have) * frameBytes), at: end)
+        put32(want * frameBytes, at: dataAt + 4)
+        put32(b.count - 8, at: 4)
+        try Data(b).write(to: url, options: .atomic)
+        return true
+    }
+
+    /// The tracks of a format-1 standard MIDI file, with their names (the
+    /// staves, as LilyPond writes them; the first is the tempo track).
+    public static func midiTracks(_ data: Data) -> (header: [UInt8], tracks: [(name: String, bytes: [UInt8])])? {
+        let b = [UInt8](data)
+        func u32(_ i: Int) -> Int { Int(b[i]) << 24 | Int(b[i + 1]) << 16 | Int(b[i + 2]) << 8 | Int(b[i + 3]) }
+        guard b.count >= 14, Array(b[0..<4]) == Array("MThd".utf8) else { return nil }
+        let headerEnd = 8 + u32(4)
+        var tracks: [(String, [UInt8])] = []
+        var i = headerEnd
+        while i + 8 <= b.count, Array(b[i..<(i + 4)]) == Array("MTrk".utf8) {
+            let size = u32(i + 4)
+            let chunk = Array(b[i..<min(b.count, i + 8 + size)])
+            // The first track-name meta event (FF 03 len text), if any.
+            var name = ""
+            if let at = (8..<max(8, chunk.count - 3)).first(where: { chunk[$0] == 0xFF && chunk[$0 + 1] == 0x03 }) {
+                let len = Int(chunk[at + 2])
+                if at + 3 + len <= chunk.count { name = String(decoding: chunk[(at + 3)..<(at + 3 + len)], as: UTF8.self) }
+            }
+            tracks.append((name, chunk))
+            i += 8 + size
+        }
+        return (Array(b[0..<headerEnd]), tracks)
+    }
+
+    /// A MIDI file with the tempo track and only track `keep`.
+    public static func midi(_ data: Data, keepingTrack keep: Int) -> Data? {
+        guard let (header, tracks) = midiTracks(data), tracks.indices.contains(keep), keep > 0 else { return nil }
+        var h = header
+        h[10] = 0; h[11] = 2   // two tracks
+        return Data(h + tracks[0].bytes + tracks[keep].bytes)
+    }
+}

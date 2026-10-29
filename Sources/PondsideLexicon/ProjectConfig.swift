@@ -23,6 +23,8 @@ public struct ProjectConfig: Sendable, Hashable {
     public var soundFont: URL?
     public var handlers: URL?
     public var resources: URL?
+    /// The agent the Agent pane runs (`[agent] command`), e.g. "claude" or "opencode".
+    public var agentCommand: String?
 
     public static let fileName = "pondside.toml"
 
@@ -49,6 +51,7 @@ public struct ProjectConfig: Sendable, Hashable {
         soundFont = path(doc["audio"]?["soundfont"])
         handlers = path(doc["supercollider"]?["handlers"])
         resources = path(doc["supercollider"]?["resources"])
+        agentCommand = doc["agent"]?["command"]?.string
     }
 
     /// The nearest pondside.toml at or above `start` (a file or a folder);
@@ -65,5 +68,28 @@ public struct ProjectConfig: Sendable, Hashable {
             if parent.path == dir.path || dir.path == "/" { return ProjectConfig(root: fallback) }
             dir = parent
         }
+    }
+}
+
+extension ProjectConfig {
+    /// `text` (a pondside.toml, possibly empty) with `[lilypond] version`
+    /// set to `version`, changing only that line or adding it.
+    public static func settingLilyPond(version: String, in text: String) -> String {
+        var lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        if lines.last == "" { lines.removeLast() }
+        let table = lines.firstIndex { $0.trimmingCharacters(in: .whitespaces) == "[lilypond]" }
+        let entry = "version = \"\(version)\""
+        if let table {
+            var i = table + 1
+            while i < lines.count, !lines[i].trimmingCharacters(in: .whitespaces).hasPrefix("[") {
+                if lines[i].trimmingCharacters(in: .whitespaces).hasPrefix("version") { lines[i] = entry; return lines.joined(separator: "\n") + "\n" }
+                i += 1
+            }
+            lines.insert(entry, at: table + 1)
+        } else {
+            if !lines.isEmpty { lines.append("") }
+            lines += ["[lilypond]", entry]
+        }
+        return lines.joined(separator: "\n") + "\n"
     }
 }

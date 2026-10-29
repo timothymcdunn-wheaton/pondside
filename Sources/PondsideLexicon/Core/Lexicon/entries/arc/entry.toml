@@ -1,0 +1,41 @@
+schema   = 1
+id       = "arc"
+version  = "1.0.0"
+gloss    = "A smooth line through given points over the span, with fainter echo copies"
+tags     = ["graphic", "line", "gesture", "contour"]
+kind     = "graphic"
+lilypond = ">=2.24"
+license  = "CC0-1.0"
+
+[entry]
+command   = "\\startGraphic \"arc\" #'((points . ((0 -1) (0.5 2) (1 0))) (echoes . 2)) s1*2 \\stopGraphic"
+attaches  = "span"
+music-arg = false
+
+[params.points]
+type    = "list"
+default = [[0, -1], [0.5, 2], [1, 0]]
+doc     = "(q y) pairs: q 0..1 along the span, y in staff spaces"
+
+[params.thickness]
+type    = "float"
+default = 0.15
+min     = 0.02
+max     = 0.8
+doc     = "Line thickness, staff spaces"
+
+[params.echoes]
+type    = "int"
+default = 0
+min     = 0
+max     = 8
+doc     = "Fainter copies following the line"
+
+[params.echo-offset]
+type    = "float"
+default = 0.6
+doc     = "Each echo's shift, staff spaces (down for positive)"
+
+[files]
+impl   = "impl.ily"
+readme = "README.md"

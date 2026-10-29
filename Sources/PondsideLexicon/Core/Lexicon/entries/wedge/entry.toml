@@ -1,0 +1,55 @@
+schema   = 1
+id       = "wedge"
+version  = "1.0.0"
+gloss    = "A filled wedge opening or closing over the span, maybe dissolving to grains"
+tags     = ["graphic", "wedge", "crescendo", "electronics"]
+kind     = "graphic"
+lilypond = ">=2.24"
+license  = "CC0-1.0"
+
+[entry]
+command   = "\\startGraphic \"wedge\" #'((from . 0) (to . 1.5)) s1 \\stopGraphic"
+attaches  = "span"
+music-arg = false
+
+[params.from]
+type    = "float"
+default = 0.0
+min     = 0.0
+max     = 6.0
+doc     = "Half-height at the start, staff spaces"
+
+[params.to]
+type    = "float"
+default = 1.5
+min     = 0.0
+max     = 6.0
+doc     = "Half-height at the end, staff spaces"
+
+[params.centre]
+type    = "float"
+default = 0.0
+doc     = "Staff spaces from the middle line"
+
+[params.gray]
+type    = "float"
+default = 0.0
+min     = 0.0
+max     = 0.95
+doc     = "0 black, 0.9 very light"
+
+[params.dissolve]
+type    = "float"
+default = 0.0
+min     = 0.0
+max     = 1.0
+doc     = "The last fraction of the span breaks into grains"
+
+[params.seed]
+type    = "int"
+default = 0
+doc     = "For the grains"
+
+[files]
+impl   = "impl.ily"
+readme = "README.md"

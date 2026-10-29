@@ -4,14 +4,36 @@
 set -eu
 cd "$(dirname "$0")/.."
 config="${1:-release}"
-swift build -c "$config" --product PondsideApp
-swift build -c "$config" --product pondside
-bin="$(swift build -c "$config" --show-bin-path)"
+
+# swift-sheet-music needs Swift 6.2+; Xcode 16 and the Command Line Tools
+# ship 6.0. Prefer a swiftly toolchain even in a shell opened before swiftly
+# was installed. Override with SWIFT=/path/to/swift.
+if [ -z "${SWIFT:-}" ]; then
+  SWIFT=swift
+  [ -x "$HOME/.swiftly/bin/swift" ] && SWIFT="$HOME/.swiftly/bin/swift"
+fi
+version="$("$SWIFT" --version 2>/dev/null | sed -n 's/.*Swift version \([0-9]*\)\.\([0-9]*\).*/\1 \2/p' | head -1)"
+set -- $version
+if [ "${1:-0}" -lt 6 ] || { [ "${1:-0}" -eq 6 ] && [ "${2:-0}" -lt 2 ]; }; then
+  echo "error: $SWIFT is Swift ${1:-?}.${2:-?}; Pondside needs 6.2 or later (swiftly install 6.4.1)" >&2
+  exit 1
+fi
+
+"$SWIFT" build -c "$config" --product PondsideApp
+"$SWIFT" build -c "$config" --product pondside
+bin="$("$SWIFT" build -c "$config" --show-bin-path)"
 app=".build/Pondside.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$bin/PondsideApp" "$app/Contents/MacOS/Pondside"
 cp "$bin/pondside" "$app/Contents/Resources/pondside"
+# SwiftPM resource bundles (the Lexicon, the Bravura font). Bundle.module
+# looks beside the app's resources, and beside the CLI, which lives there
+# too; newer toolchains no longer fall back to the build directory.
+for bundle in "$bin"/*.bundle; do
+  case "$bundle" in *Tests.bundle) continue ;; esac
+  [ -d "$bundle" ] && cp -R "$bundle" "$app/Contents/Resources/"
+done
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

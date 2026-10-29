@@ -26,7 +26,17 @@ final class MCPTests: XCTestCase {
 
         let tools = try await call(server, #"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#)
         guard case .array(let list)? = tools["result"]?["tools"] else { return XCTFail("\(tools)") }
-        XCTAssertEqual(list.compactMap { $0["name"]?.string }, ["check", "query", "render", "cues", "lexicon_check"])
+        XCTAssertEqual(list.compactMap { $0["name"]?.string },
+                       ["check", "query", "render", "cues", "lexicon_check", "score_context", "lexicon_search",
+                        "lexicon_entry", "graphic_preview", "graphic_insert", "lexicon_propose"])
+
+        // The two skills, as prompts and as resources.
+        let prompts = try await call(server, #"{"jsonrpc":"2.0","id":7,"method":"prompts/list"}"#)
+        guard case .array(let promptList)? = prompts["result"]?["prompts"] else { return XCTFail("\(prompts)") }
+        XCTAssertEqual(promptList.compactMap { $0["name"]?.string }, ["graphic-notation", "lexicon-entries"])
+        let guide = try await call(server, #"{"jsonrpc":"2.0","id":8,"method":"resources/read","params":{"uri":"lexicon://guide/graphics"}}"#)
+        guard case .array(let guideContents)? = guide["result"]?["contents"] else { return XCTFail("\(guide)") }
+        XCTAssertTrue(guideContents.first?["text"]?.string?.contains("score_context") ?? false)
 
         let index = try await call(server, #"{"jsonrpc":"2.0","id":3,"method":"resources/read","params":{"uri":"lexicon://index"}}"#)
         guard case .array(let contents)? = index["result"]?["contents"] else { return XCTFail("\(index)") }

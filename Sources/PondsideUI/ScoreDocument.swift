@@ -19,6 +19,9 @@ protocol ScoreDocumentDelegate: AnyObject {
     func document(_ document: ScoreDocument, hasConflictIn file: SourceFile, diskText: String)
     func documentStatusDidChange(_ document: ScoreDocument)
     func documentDidEngrave(_ document: ScoreDocument)
+    /// The last engraving from the render cache is showing while the first
+    /// real one runs.
+    func documentDidLoadCachedRender(_ document: ScoreDocument)
     /// Files joined or left the include graph.
     func documentFilesDidChange(_ document: ScoreDocument)
 }
@@ -103,6 +106,8 @@ final class ScoreDocument {
     private(set) var lastLog = ""
     /// Cue times from the latest compile (every canvas compile logs them).
     private(set) var cueSheet: CueSheet?
+    /// The latest compile's timing rows (bars, tempos), for playing from a bar.
+    private(set) var timingLog: TimingLog?
     private(set) var pages: [EngravedPage] = []
     private(set) var installation: LilyPondInstallation? {
         didSet {
@@ -120,10 +125,28 @@ final class ScoreDocument {
     private(set) var unlinkedFiles: [SourceFile] = []
 
     private var renderTask: Task<Void, Never>?
-    private var renderGeneration = 0
+    private(set) var renderGeneration = 0
+    private(set) var completedRenderGeneration = 0
     private var compilingGeneration: Int?
     private let workDirectory: URL
     private var opened = false
+    /// Pages from the render cache are showing, not yet replaced by this
+    /// session's own engraving.
+    private(set) var showingCachedRender = false
+    /// Stores run one after another, so the last engraving is the one kept.
+    private var storeTask: Task<Void, Never>?
+    /// Checkpoints of the score's files, half a minute after the last save.
+    private var historyTask: Task<Void, Never>?
+
+    static let historyRoot: URL? = FileManager.default
+        .urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+        .appendingPathComponent("Pondside/History", isDirectory: true)
+
+    /// Where the latest engraving of every score is kept between launches:
+    /// a cache the system may purge, never beside the score (AGENTS.md).
+    static let renderCache: RenderCache? = FileManager.default
+        .urls(for: .cachesDirectory, in: .userDomainMask).first
+        .map { RenderCache(root: $0.appendingPathComponent("Pondside/Renders", isDirectory: true)) }
 
     static let autosaveDelay: Duration = .milliseconds(250)
 
@@ -157,15 +180,52 @@ final class ScoreDocument {
     func open() {
         opened = true
         for f in files { startWatching(f) }
+        showCachedRender()
         Task {
             let installs = await ToolchainStore.shared.installs()
-            installation = ToolchainDetector.select(from: installs, for: declaredVersion)
+            // pondside.toml's pin wins over the score's \\version (as in the CLI).
+            let pinned = (try? ProjectConfig.find(from: url))?.lilypondVersion.flatMap { LilyPondVersion($0) }
+            installation = ToolchainDetector.select(from: installs, for: pinned ?? declaredVersion)
             if installation == nil { setStatus(.noLilyPond) } else { engrave() }
         }
     }
 
+    /// Shows the last engraving at once; LilyPond engraves afresh anyway.
+    /// The cached text of each file lets the engraving map line its links
+    /// up with text that changed since, as for any stale engraving.
+    private func showCachedRender() {
+        guard pages.isEmpty, let entry = Self.renderCache?.load(for: url) else { return }
+        let cached = entry.pages.map(EngravedPage.init(svg:)).filter { !$0.graphics.isEmpty }
+        guard !cached.isEmpty else { return }
+        pages = cached
+        for f in files { f.engravedText = entry.snapshots[f.url.standardizedFileURL.path] }
+        distributeLinks()
+        showingCachedRender = true
+        delegate?.documentDidLoadCachedRender(self)
+    }
+
+    /// A checkpoint in the shadow history (never the user's own git repo).
+    private func scheduleCheckpoint(after delay: Duration) {
+        guard let root = Self.historyRoot, ShadowHistory.findGit() != nil else { return }
+        historyTask?.cancel()
+        let history = ShadowHistory(score: url, root: root)
+        let urls = files.map(\.url)
+        historyTask = Task.detached(priority: .background) {
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled else { return }
+            try? await history.checkpoint(urls)
+        }
+    }
+
+    /// Uses `install` for this score from now on (the choice is in pondside.toml).
+    func use(_ install: LilyPondInstallation) {
+        installation = install
+        engrave()
+    }
+
     func close() {
         flushPendingSaves()
+        scheduleCheckpoint(after: .zero)
         renderTask?.cancel()
         renderTask = nil
         let d = daemon
@@ -260,6 +320,7 @@ final class ScoreDocument {
             file.watcher?.noteOwnWrite(file.text)
             try Data(file.text.utf8).write(to: file.url, options: .atomic)
             file.sync.noteSynced(file.text)
+            scheduleCheckpoint(after: .seconds(30))
         } catch {
             setStatus(.failed("Could not save \(file.displayName): \(error.localizedDescription)"))
         }
@@ -349,6 +410,8 @@ final class ScoreDocument {
     private struct Outcome: Sendable {
         var result: EngraveResult?
         var pages: [EngravedPage]
+        /// The SVGs the pages came from, for the render cache.
+        var svgs: [Data] = []
         var error: String?
     }
 
@@ -357,8 +420,8 @@ final class ScoreDocument {
         defer { try? FileManager.default.removeItem(at: out) }
         do {
             let result = try await engraver.engrave(source, purpose: .canvas, outputDirectory: out)
-            let pages = result.pages()
-            return Outcome(result: result, pages: pages, error: nil)
+            let svgs = result.outputFiles.compactMap { try? Data(contentsOf: $0) }
+            return Outcome(result: result, pages: svgs.map(EngravedPage.init(svg:)), svgs: svgs, error: nil)
         } catch {
             return Outcome(result: nil, pages: [], error: String(describing: error))
         }
@@ -368,7 +431,10 @@ final class ScoreDocument {
         lastLog = outcome.result?.messages ?? outcome.error ?? ""
         if let result = outcome.result, result.succeeded {
             let rate = (try? ProjectConfig.find(from: url))?.sampleRate ?? 48000
-            cueSheet = CueSheet(log: result.timing, score: url.lastPathComponent, sampleRate: rate)
+            let lex = Lexicon.load(Lexicon.standardScopes(project: url.deletingLastPathComponent()))
+            timingLog = result.timing
+            cueSheet = CueSheet(log: result.timing, score: url.lastPathComponent, sampleRate: rate,
+                                soundParams: { lex.soundParams(entry: $0, params: $1, beatDur: $2, spanDur: $3, tempo: $4) })
         }
         if let result = outcome.result {
             for f in files {
@@ -384,6 +450,8 @@ final class ScoreDocument {
                 pages = outcome.pages
                 distributeLinks()
                 for f in files { f.engravedText = f.pendingSnapshot }
+                showingCachedRender = false
+                storeRender(outcome.svgs)
             }
             let errorCount = result.errors.count
             if errorCount > 0 {
@@ -394,9 +462,25 @@ final class ScoreDocument {
                 let c = result.duration.components
                 setStatus(.clean(milliseconds: Int(c.seconds) * 1000 + Int(c.attoseconds / 1_000_000_000_000_000)))
             }
+            completedRenderGeneration = renderGeneration
             delegate?.documentDidEngrave(self)
         } else {
             setStatus(.failed(outcome.error ?? "unknown error"))
+        }
+    }
+
+    /// Replaces the score's cache entry, off the main actor.
+    private func storeRender(_ svgs: [Data]) {
+        guard let cache = Self.renderCache, !svgs.isEmpty else { return }
+        var snapshots: [String: String] = [:]
+        for f in files { snapshots[f.url.standardizedFileURL.path] = f.engravedText }
+        let entry = RenderCache.Entry(pages: svgs, snapshots: snapshots,
+                                      lilypondVersion: installation.map { "\($0.version)" })
+        let score = url
+        let prior = storeTask
+        storeTask = Task.detached(priority: .utility) {
+            await prior?.value
+            try? cache.store(entry, for: score)
         }
     }
 

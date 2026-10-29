@@ -134,15 +134,9 @@ private final class HoverTracker: NSResponder {
 }
 
 @MainActor
-private final class TipView: NSVisualEffectView {
+private final class TipView: GlassView {
     init(title: String, gloss: String, keys: String) {
-        super.init(frame: .zero)
-        material = .hudWindow
-        blendingMode = .behindWindow
-        state = .active
-        wantsLayer = true
-        layer?.cornerRadius = 8
-        layer?.masksToBounds = true
+        super.init(cornerRadius: 8)
 
         let t = NSTextField(labelWithString: title)
         t.font = .systemFont(ofSize: Theme.bodySize, weight: .semibold)
@@ -152,7 +146,7 @@ private final class TipView: NSVisualEffectView {
         k.textColor = Theme.accent
         let g = NSTextField(wrappingLabelWithString: gloss)
         g.font = Theme.secondaryFont
-        g.textColor = Theme.secondaryText
+        g.textColor = Theme.glassSecondaryText
         g.preferredMaxLayoutWidth = 280
         let top = NSStackView(views: [t, k])
         top.spacing = 12

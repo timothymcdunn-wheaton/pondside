@@ -1,0 +1,40 @@
+schema   = 1
+id       = "swell-shape"
+version  = "1.0.0"
+gloss    = "A solid shape whose height follows an envelope: a swell, a pulse, a band"
+tags     = ["graphic", "shape", "swell", "electronics"]
+kind     = "graphic"
+lilypond = ">=2.24"
+license  = "CC0-1.0"
+
+[entry]
+command   = "\\startGraphic \"swell-shape\" #'((height . (swell 1 0.1 2))) s1*2 \\stopGraphic"
+attaches  = "span"
+music-arg = false
+
+[params.height]
+type    = "envelope"
+default = ["swell", 1, 0.1, 2.0]
+doc     = "Half-height in staff spaces over the span"
+
+[params.centre]
+type    = "envelope"
+default = 0
+doc     = "Staff spaces from the middle line"
+
+[params.side]
+type    = "enum"
+values  = ["both", "up", "down"]
+default = "both"
+doc     = "Grow both ways from the centre, or only up or down"
+
+[params.gray]
+type    = "float"
+default = 0.0
+min     = 0.0
+max     = 0.95
+doc     = "0 black, 0.9 very light"
+
+[files]
+impl   = "impl.ily"
+readme = "README.md"

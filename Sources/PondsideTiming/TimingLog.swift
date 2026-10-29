@@ -21,6 +21,10 @@ public struct TimingLog: Sendable, Hashable {
             case note(staff: String, midi: Int)
             case group(staff: String, start: Bool)
             case meter(numerator: Int, denominator: Int)
+            /// A Lexicon entry's cue: which entry, how long its music is (whole
+            /// notes) and its params as written (a Scheme alist), so its sound
+            /// params can be evaluated with real timing.
+            case lexicon(cue: String, entry: String, span: Rational, params: String)
         }
 
         /// Where a text event (a cue, a mark) was written, when known.
@@ -95,6 +99,9 @@ public struct TimingLog: Sendable, Hashable {
                 let p = values.first?.split(separator: "/") ?? []
                 guard p.count == 2, let n = Int(p[0]), let d = Int(p[1]), d > 0 else { continue }
                 kind = .meter(numerator: n, denominator: d)
+            case "lexicon":
+                guard values.count >= 4, let span = Rational(parsing: values[2]) else { continue }
+                kind = .lexicon(cue: values[0], entry: values[1], span: span, params: values[3...].joined(separator: "\t"))
             default:
                 continue
             }

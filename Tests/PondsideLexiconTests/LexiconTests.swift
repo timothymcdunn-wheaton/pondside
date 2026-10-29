@@ -183,7 +183,9 @@ final class LibraryTests: XCTestCase {
     func testCoreEntriesAreValid() {
         let lex = Lexicon.load(Lexicon.standardScopes(project: nil).filter { $0.0 == .core })
         XCTAssertTrue(lex.problems.isEmpty, lex.problems.map(\.description).joined(separator: "\n"))
-        XCTAssertEqual(lex.ids, ["air-tone", "feathered-beam", "niente-hairpin", "proportional", "senza-misura", "timed-fermata"])
+        XCTAssertEqual(lex.ids, ["air-tone", "aleatoric-box", "arc", "feathered-beam", "grain-cloud", "niente-hairpin",
+                                 "pitch-band", "proportional", "scribble", "senza-misura", "squiggle", "staff-ripple",
+                                 "swell-shape", "timed-fermata", "wedge"])
         let index = lex.indexJSON()
         XCTAssertEqual(index.split(separator: "\n").count, lex.ids.count + 2, "one line per entry between [ and ]")
         XCTAssertTrue(index.contains("{\"gloss\":\"Air sound"))
@@ -191,6 +193,28 @@ final class LibraryTests: XCTestCase {
         XCTAssertLessThan(index.count / 4 / lex.ids.count, 60)
         XCTAssertTrue(lex.tier1("air-tone")?.contains("[sound]") ?? false)
         XCTAssertTrue(lex.tier2("air-tone")?.contains("pondside-lexicon-register!") ?? false)
+    }
+
+    func testGraphicUsesAreFoundAndChecked() {
+        let lex = Lexicon.load(Lexicon.standardScopes(project: nil).filter { $0.0 == .core })
+        let score = """
+        g = { s1\\startGraphic "grain-cloud" #'((height . (swell 3 0.5 4)) (avoid . (note-head-interface))) s1\\stopGraphic }
+        h = { s1\\startGraphic "grain-cloud" #'((height . (wobble 2)) (density . 9)) s1\\stopGraphic }
+        """
+        let uses = LexiconUse.find(in: score)
+        XCTAssertEqual(uses.map(\.id), ["grain-cloud", "grain-cloud"])
+        XCTAssertEqual(uses[0].params["height"], .array([.string("swell"), .integer(3), .float(0.5), .integer(4)]))
+        let problems = lex.check(score).map(\.message)
+        XCTAssertEqual(problems.count, 2, "\(problems)")
+        XCTAssertTrue(problems.contains { $0.contains("wobble is not an envelope") }, "\(problems)")
+        XCTAssertTrue(problems.contains { $0.contains("above the maximum") }, "\(problems)")
+        // The kit comes with any graphic entry, before the implementations.
+        let include = lex.includeFile(for: ["grain-cloud"])
+        let kit = include.range(of: "pondside-graphics.ily"), impl = include.range(of: "grain-cloud/impl.ily")
+        XCTAssertNotNil(kit)
+        XCTAssertTrue(kit!.lowerBound < impl!.lowerBound)
+        XCTAssertTrue(include.contains("#(hash-set! pondside-graphics-defaults \"grain-cloud\""))
+        XCTAssertFalse(lex.includeFile(for: ["air-tone"]).contains("pondside-graphics.ily"))
     }
 
     func testLaterScopesOverride() throws {
@@ -259,6 +283,41 @@ final class LexiconEngravingTests: XCTestCase {
         XCTAssertTrue(result.errors.isEmpty, result.log)
         XCTAssertFalse(result.log.contains("Lexicon has no entry"), result.log)
     }
+    /// The graphics kit and every graphic entry draw, across a line break,
+    /// identically on every compile, and link back to their invocation.
+    func testGraphicEntriesDrawDeterministically() async throws {
+        let body = """
+        \\paper { indent = 0 }
+        \\score { << \\new Staff { \\repeat unfold 32 { c''4 } }
+          \\new Staff << { s1*8 } {
+            s1\\startGraphic "grain-cloud" #'((height . (swell 2 0.3 2)) (avoid . (note-head-interface)))
+            s1 s1 s1 \\break s1\\stopGraphic\\startGraphic "staff-ripple" #'()
+            s1\\stopGraphic\\startGraphic "wedge" #'((dissolve . 0.3))
+            s1\\stopGraphic\\startGraphic "swell-shape" #'((side . up))
+            s1\\stopGraphic\\startGraphic "arc" #'((echoes . 2))
+            s1\\stopGraphic } >> >> }
+        \\score { << \\new Staff { c''4\\startGraphic "aleatoric-box" #'((label . "repeat")) d'' e'' f''\\stopGraphic }
+          \\new Staff << { s1*2 } { s1\\startGraphic "squiggle" #'() s1\\stopGraphic\\startGraphic "pitch-band" #'() s1\\stopGraphic } >> >> }
+        \\score { << \\new Staff { c''1 c'' } \\new Staff << { s1*2 } { s1\\startGraphic "scribble" #'() s1\\stopGraphic } >> >> }
+        """
+        let (first, _, _) = try await compile(body)
+        XCTAssertTrue(first.succeeded, first.log)
+        XCTAssertTrue(first.errors.isEmpty, first.log)
+        XCTAssertFalse(first.log.contains("no entry"), first.log)
+        let warnings = first.diagnostics.filter { $0.severity == .warning && $0.file?.hasSuffix("score.ly") == true }
+        XCTAssertTrue(warnings.isEmpty, "\(warnings.map { "\($0.line ?? 0): \($0.message)" })")
+        let (second, _, _) = try await compile(body)
+        // The two compiles differ only in their links' file paths.
+        func strip(_ s: String) -> String {
+            s.replacingOccurrences(of: #"textedit://[^"]*"#, with: "", options: .regularExpression)
+        }
+        let a = first.outputFiles.compactMap { try? String(contentsOf: $0, encoding: .utf8) }
+        let b = second.outputFiles.compactMap { try? String(contentsOf: $0, encoding: .utf8) }
+        XCTAssertEqual(a.map(strip), b.map(strip))
+        // The grain cloud is linked to its \startGraphic (line 7 of the score).
+        XCTAssertTrue(a.joined().contains("score.ly:7:"))
+    }
+
 
     func testSoundBindingsPlaceCuesAndHoldsTime() async throws {
         let (result, file, lily) = try await compile("""
@@ -274,6 +333,16 @@ final class LexiconEngravingTests: XCTestCase {
         XCTAssertEqual(sheet.cues.map(\.name), ["airTone"])
         XCTAssertEqual(sheet.cues.first?.seconds ?? 0, 7, accuracy: 1e-6)
         XCTAssertEqual(sheet.cues.first?.position.moment, "5/4")
+        // Its [sound] params, evaluated with the real timing: amp = 0.05 + 0.4 * amount
+        // (default 0.5), dur = spanDur (d2 e at 60 bpm: 4 s), rate = tempo / 60.
+        let lex = Lexicon.load(Lexicon.standardScopes(project: nil).filter { $0.0 == .core })
+        let timed = CueSheet(log: log, score: "score.ly",
+                             soundParams: { lex.soundParams(entry: $0, params: $1, beatDur: $2, spanDur: $3, tempo: $4) })
+        let params = try XCTUnwrap(timed.cues.first?.params)
+        XCTAssertEqual(timed.cues.first?.entry, "air-tone")
+        XCTAssertEqual(params["amp"] ?? 0, 0.25, accuracy: 1e-9)
+        XCTAssertEqual(params["dur"] ?? 0, 4, accuracy: 1e-6)
+        XCTAssertEqual(params["rate"] ?? 0, 1, accuracy: 1e-9)
     }
 
     func testSenzaMisuraLastsWhatItSays() async throws {
@@ -314,6 +383,15 @@ final class ProjectConfigTests: XCTestCase {
         XCTAssertEqual(config.handlers?.lastPathComponent, "cues.scd")
         XCTAssertEqual(config.soundFont?.deletingLastPathComponent().lastPathComponent, "sounds")
         XCTAssertThrowsError(try ProjectConfig(toml: "[audio]\nsample-rate = 12345", root: root))
+    }
+
+    func testPinningLilyPondChangesOneLine() {
+        XCTAssertEqual(ProjectConfig.settingLilyPond(version: "2.24.3", in: ""), "[lilypond]\nversion = \"2.24.3\"\n")
+        let toml = "[audio]\nsample-rate = 44100\n\n[lilypond]\nversion = \"2.26.0\" # pinned\n"
+        XCTAssertEqual(ProjectConfig.settingLilyPond(version: "2.24.3", in: toml),
+                       "[audio]\nsample-rate = 44100\n\n[lilypond]\nversion = \"2.24.3\"\n")
+        XCTAssertEqual(ProjectConfig.settingLilyPond(version: "2.24.3", in: "[audio]\nsample-rate = 44100\n"),
+                       "[audio]\nsample-rate = 44100\n\n[lilypond]\nversion = \"2.24.3\"\n")
     }
 
     func testDefaultsWithoutAFile() throws {

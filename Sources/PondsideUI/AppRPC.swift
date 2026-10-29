@@ -63,6 +63,14 @@ final class AppRPC {
             return ["path": .string(file.url.path), "text": .string(file.text)]
         case "document.selection":
             return try controller(params).rpcSelection
+        case "document.context":
+            let c = try controller(params)
+            if let path = params["path"]?.string, let line = params["line"]?.int {
+                guard c.revealSource(path: path, line: line, character: params["character"]?.int ?? 0) else {
+                    throw RPCSocketServer.MethodError("can't find \(path):\(line)")
+                }
+            }
+            return c.rpcContext
         case "document.select":
             let c = try controller(params)
             guard let path = params["path"]?.string, let line = params["line"]?.int else {

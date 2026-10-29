@@ -1,4 +1,5 @@
 \version "2.24.0"
+\include "lexicon.ily"
 % A two-part invention in the style of the 18th century.
 % Exercises \relative chaining across voices, chords, ties and grace notes.
 
@@ -30,11 +31,14 @@ lower = \relative c {
   \clef bass
   d4 r r16 a' b cis  d e f d |
   e,8 cis' d,4 r16 d e f g e f d |
-  c!4 bes8 a  d4 a |
-  bes8 a g f  e4-> d |
-  g,8 a bes cis  d2 |
+  c!4 bes8 a d bes a4 |
+  bes8( a--( g f  e4->) |
+ a,8 d e\startGraphic "scribble" #'() d bes cis  d2\stopGraphic |
   a1~ |
   a2 d, \bar "|."
+}
+
+\paper {
 }
 
 \score {
@@ -42,5 +46,10 @@ lower = \relative c {
     \new Staff = "up" \upper
     \new Staff = "down" \lower
   >>
-  \layout { }
+  \layout {
+    \context {
+      \Score
+      \override SpacingSpanner.spacing-increment = #1.2
+    }
+   }
 }

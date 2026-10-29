@@ -1,6 +1,7 @@
 import Foundation
 
-/// A `\lexicon "id" #'((name . value) …)` in a score, found statically so
+/// A `\lexicon "id" #'((name . value) …)` (or a graphic's
+/// `\startGraphic "id" #'(…)`) in a score, found statically so
 /// mistakes are caught before compiling: unknown entries, unknown params,
 /// values out of range. (LilyPond would only say "wrong type argument".)
 public struct LexiconUse: Hashable, Sendable {
@@ -16,7 +17,7 @@ public struct LexiconUse: Hashable, Sendable {
         var out: [LexiconUse] = []
         var i = 0
         var line = 1
-        let command = Array("\\lexicon".utf8)
+        let commands = [Array("\\lexicon".utf8), Array("\\startGraphic".utf8)]
         func skipSpace(_ j: inout Int) {
             while j < b.count, b[j] == 0x20 || b[j] == 0x09 || b[j] == 0x0A || b[j] == 0x0D { j += 1 }
         }
@@ -47,8 +48,10 @@ public struct LexiconUse: Hashable, Sendable {
                 i += 1
                 continue
             }
-            guard c == UInt8(ascii: "\\"), i + command.count <= b.count, Array(b[i..<(i + command.count)]) == command,
-                  i + command.count == b.count || !Self.isWordByte(b[i + command.count]) else {
+            guard c == UInt8(ascii: "\\"), let command = commands.first(where: { command in
+                i + command.count <= b.count && Array(b[i..<(i + command.count)]) == command
+                    && (i + command.count == b.count || !Self.isWordByte(b[i + command.count]))
+            }) else {
                 i += 1
                 continue
             }
@@ -71,6 +74,12 @@ public struct LexiconUse: Hashable, Sendable {
             i = k
         }
         return out
+    }
+
+    /// `((density . 0.8) (label . "x"))` → values, as a use's params.
+    public static func params(fromAlist text: String) -> [String: TOMLValue] {
+        var i = 0
+        return parseAlist(Array(text.utf8), &i)
     }
 
     static func isWordByte(_ c: UInt8) -> Bool {
@@ -105,7 +114,10 @@ public struct LexiconUse: Hashable, Sendable {
             i += 1
             skip()
             var value: TOMLValue?
-            if i < b.count, b[i] == UInt8(ascii: "\"") {
+            if i < b.count, b[i] == UInt8(ascii: "(") {
+                // (height . (swell 3 0.5 4)): a list value.
+                value = parseList(b, &i)
+            } else if i < b.count, b[i] == UInt8(ascii: "\"") {
                 var s = [UInt8]()
                 i += 1
                 while i < b.count, b[i] != UInt8(ascii: "\"") {
@@ -132,6 +144,29 @@ public struct LexiconUse: Hashable, Sendable {
             if i < b.count, b[i] == UInt8(ascii: ")") { i += 1 }
             if let value, !name.isEmpty { out[name] = value }
         }
+    }
+
+    /// `(swell 3 0.5 4)` or `((0 . 1) (1 . 2))` → an array; symbols become strings.
+    static func parseList(_ b: [UInt8], _ i: inout Int) -> TOMLValue {
+        var items: [TOMLValue] = []
+        i += 1
+        while i < b.count {
+            while i < b.count, [0x20, 0x09, 0x0A, 0x0D].contains(b[i]) { i += 1 }
+            guard i < b.count else { break }
+            if b[i] == UInt8(ascii: ")") { i += 1; break }
+            if b[i] == UInt8(ascii: "(") { items.append(parseList(b, &i)); continue }
+            var t = ""
+            while i < b.count, ![0x20, 0x09, 0x0A, 0x0D, UInt8(ascii: "("), UInt8(ascii: ")")].contains(b[i]) {
+                t.unicodeScalars.append(Unicode.Scalar(b[i]))
+                i += 1
+            }
+            if t == "." { continue }
+            let text = t.hasPrefix("\"") && t.hasSuffix("\"") && t.count >= 2 ? String(t.dropFirst().dropLast()) : t
+            if let n = Int(text) { items.append(.integer(n)) }
+            else if let d = Double(text) { items.append(.float(d)) }
+            else { items.append(.string(text)) }
+        }
+        return .array(items)
     }
 
     static func rational(_ t: String) -> Double? {

@@ -264,6 +264,38 @@ public struct ScoreEditor: Sendable {
                          selectionAnchors: [mapped(span.lowerBound, through: edits, insertionAt: span.lowerBound) + edits[0].replacement.utf8.count])
     }
 
+    // MARK: Commands before a note
+
+    /// Puts `command` (`\clef bass`, `\time 3/4`, `\key d \major`,
+    /// `\tempo "Allegro" 4 = 120`) just before `event`. The same command
+    /// already standing there (with nothing but other commands between it
+    /// and the note) is replaced instead, so choosing again changes it.
+    public func insertCommand(_ command: String, before eventIndex: Int, name: String) -> ScoreEdit? {
+        guard events.indices.contains(eventIndex), let keyword = command.split(separator: " ").first else { return nil }
+        let start = events[eventIndex].range.lowerBound
+        // The run of commands right before the event: back to the previous
+        // event, brace or bar check.
+        let floor = events.indices.last { $0 < eventIndex }.map { events[$0].range.upperBound } ?? 0
+        var leaves: [SyntaxNode] = []
+        tree.root.forEachLeaf { leaf in
+            if leaf.range.lowerBound >= floor, leaf.range.upperBound <= start { leaves.append(leaf) }
+        }
+        if let stop = leaves.lastIndex(where: { [.openBrace, .closeBrace, .barCheck, .openSimultaneous, .closeSimultaneous].contains($0.kind) }) {
+            leaves.removeFirst(stop + 1)
+        }
+        let commands = leaves.indices.filter { leaves[$0].kind == .command }
+        if let i = commands.last(where: { tree.string(leaves[$0].range) == keyword }) {
+            // It runs to the next command or the note, trimmed.
+            let next = commands.first { $0 > i }.map { leaves[$0].range.lowerBound } ?? start
+            var end = next
+            while end > leaves[i].range.lowerBound, [0x20, 0x09, 0x0A].contains(tree.bytes[end - 1]) { end -= 1 }
+            let edit = TextEdit(leaves[i].range.lowerBound..<end, command)
+            return ScoreEdit(name: name, edits: [edit], selectionAnchors: [mapOld(start, through: [edit])])
+        }
+        let edit = TextEdit.insert(command + " ", at: start)
+        return ScoreEdit(name: name, edits: [edit], selectionAnchors: [start + edit.replacement.utf8.count])
+    }
+
     // MARK: Insert and delete
 
     /// Inserts a note (step 0…6, or nil for a rest) after `event`, choosing
@@ -380,8 +412,7 @@ public struct ScoreEditor: Sendable {
             }
         }
         if materialized {
-            let first = targets.min()!
-            let anchorEvent = events.indices.first { $0 > first && !targets.contains($0) }
+            let anchorEvent = anchor(afterDeleting: targets)
             return ScoreEdit(name: "Delete", edits: edits + protectSuccessors(of: [], newEffective: [:], removed: targets),
                              selectionAnchors: anchorEvent.map { [edits.mapOffset(events[$0].range.lowerBound)] } ?? [])
         }
@@ -397,13 +428,26 @@ public struct ScoreEditor: Sendable {
         }
         edits += rewritePitches([:], referents: overrides, skip: deletedNotes)
         edits += protectSuccessors(of: [], newEffective: [:], removed: targets)
-        let first = targets.min()!
-        let anchorEvent = events.indices.first { $0 > first && !targets.contains($0) } ?? events.indices.last { $0 < first }
+        let anchorEvent = anchor(afterDeleting: targets)
         let anchors = anchorEvent.map { [mapOld(events[$0].range.lowerBound, through: edits)] } ?? []
         return ScoreEdit(name: "Delete", edits: edits, selectionAnchors: anchors)
     }
 
     // MARK: Helpers
+
+    /// Where the selection goes after a deletion: the next event of the
+    /// same staff's music, else the one before it. Deleting a staff's last
+    /// note steps back rather than jumping to the next staff's first.
+    private func anchor(afterDeleting targets: Set<Int>) -> Int? {
+        guard let first = targets.min(), let last = targets.max() else { return nil }
+        let candidates = events.indices.filter { !targets.contains($0) && events[$0].kind != .lyric }
+        if let block = LensBlockFinder.block(in: tree, at: events[first].range.lowerBound) {
+            let staff = Set(block.events)
+            if let next = candidates.first(where: { $0 > last && staff.contains($0) }) { return next }
+            if let previous = candidates.last(where: { $0 < first && staff.contains($0) }) { return previous }
+        }
+        return candidates.first { $0 > last } ?? candidates.last { $0 < first }
+    }
 
     /// Letters, digits and octave marks: bytes that would fuse into one token.
     private func isWordByte(_ c: UInt8?) -> Bool {

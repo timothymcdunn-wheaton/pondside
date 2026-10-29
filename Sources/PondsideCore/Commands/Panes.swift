@@ -1,7 +1,7 @@
 /// What a pane can show. Panes are frames; content is cargo: swapping
 /// content never changes a pane's geometry.
 public enum PaneContent: String, CaseIterable, Codable, Hashable, Sendable {
-    case score, lilypond, compilerOutput, terminal, supercollider, python, agent, cues, lexicon, osc
+    case score, lilypond, compilerOutput, terminal, supercollider, python, agent, cues, lexicon
 
     public var title: String {
         switch self {
@@ -14,7 +14,6 @@ public enum PaneContent: String, CaseIterable, Codable, Hashable, Sendable {
         case .agent: return "Agent"
         case .cues: return "Cue Inspector"
         case .lexicon: return "Lexicon"
-        case .osc: return "OSC Monitor"
         }
     }
 
@@ -36,7 +35,6 @@ public enum PaneContent: String, CaseIterable, Codable, Hashable, Sendable {
         case .agent: return "a"
         case .cues: return "u"
         case .lexicon: return "x"
-        case .osc: return "m"
         }
     }
 }

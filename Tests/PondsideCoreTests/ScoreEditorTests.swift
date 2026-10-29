@@ -140,6 +140,40 @@ final class ScoreEditorTests: XCTestCase {
         XCTAssertEqual(out, "\\relative c' { c4 c8 d }")
     }
 
+    func testDeletingAStaffsLastNoteSelectsTheOneBefore() {
+        let src = "upper = { c'4 d' e' }\nlower = { c4 d e }\n"
+        let tree = SyntaxTree(src)
+        let last = tree.events.firstIndex { tree.string($0.range) == "e'" }!
+        let edit = ScoreEditor(tree).delete(events: [last])!
+        let out = edit.edits.apply(to: src)
+        XCTAssertEqual(out, "upper = { c'4 d' }\nlower = { c4 d e }\n")
+        // The anchor is d', in the same staff, not the lower staff's c.
+        let anchor = try! XCTUnwrap(edit.selectionAnchors.first)
+        XCTAssertEqual(SyntaxTree(out).events.first { $0.range.lowerBound == anchor }.map { SyntaxTree(out).string($0.range) }, "d'")
+        // In the middle of a staff the next note is still the one selected.
+        let middle = ScoreEditor(tree).delete(events: [tree.events.firstIndex { tree.string($0.range) == "d'" }!])!
+        XCTAssertEqual(middle.selectionAnchors.first.map { a in
+            String(decoding: Array(middle.edits.apply(to: src).utf8)[a..<(a + 2)], as: UTF8.self)
+        }, "e'")
+    }
+
+    func testCommandsGoBeforeTheNoteAndReplaceTheirOwnKind() {
+        let src = "{ c'4 d' | e' f' }"
+        let e = applying(src, at: "e'") { $0.insertCommand("\\clef bass", before: $1, name: "Clef") }!
+        XCTAssertEqual(e, "{ c'4 d' | \\clef bass e' f' }")
+        // Choosing again changes the clef rather than stacking another.
+        let again = applying(e, at: "e'") { $0.insertCommand("\\clef alto", before: $1, name: "Clef") }!
+        XCTAssertEqual(again, "{ c'4 d' | \\clef alto e' f' }")
+        // Another kind of command joins the run; a meter with its numbers is replaced whole.
+        let time = applying(again, at: "e'") { $0.insertCommand("\\time 3/4", before: $1, name: "Time") }!
+        XCTAssertEqual(time, "{ c'4 d' | \\clef alto \\time 3/4 e' f' }")
+        let time2 = applying(time, at: "e'") { $0.insertCommand("\\time 6/8", before: $1, name: "Time") }!
+        XCTAssertEqual(time2, "{ c'4 d' | \\clef alto \\time 6/8 e' f' }")
+        // A clef before the previous bar line is not this note's.
+        let fresh = applying("{ \\clef bass c4 | d4 }", at: "d4") { $0.insertCommand("\\clef treble", before: $1, name: "Clef") }!
+        XCTAssertEqual(fresh, "{ \\clef bass c4 | \\clef treble d4 }")
+    }
+
     func testInsertionsNeverFuseTokens() {
         XCTAssertEqual(applying("{ e'8( d') }", at: "e'8(") { $0.insert(step: 4, after: $1, duration: nil) }, "{ e'8( g' d') }")
         XCTAssertEqual(applying("{ e'8(d') }", at: "e'8(") { $0.insert(step: 4, after: $1, duration: nil) }, "{ e'8( g' d') }")

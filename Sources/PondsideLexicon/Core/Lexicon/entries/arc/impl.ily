@@ -1,0 +1,16 @@
+% arc: a smooth contour through (q y) points, with echo copies.
+#(define-graphic! "arc"
+  (lambda (g p)
+    (let* ((w (g-width g))
+           (pts (map (lambda (pt) (cons (* w (car pt)) (if (pair? (cdr pt)) (cadr pt) (cdr pt))))
+                     (assq-ref p 'points)))
+           (th (assq-ref p 'thickness))
+           (echoes (assq-ref p 'echoes))
+           (dy (assq-ref p 'echo-offset)))
+      (cons (list 'curve pts th)
+            (map (lambda (i)
+                   (let ((k (1+ i)))
+                     (list 'gray (min 0.85 (* 0.22 k))
+                           (list 'curve (map (lambda (pt) (cons (+ (car pt) (* 0.4 k)) (- (cdr pt) (* dy k)))) pts)
+                                 (* th (- 1 (* 0.12 k)))))))
+                 (iota echoes))))))

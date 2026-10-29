@@ -17,7 +17,11 @@ pondside render  score.ly [--format pdf|svg|png] [--out dir] [--json]
 pondside cues    score.ly [--format json|cues] [--rate 48000] [--out file]
 pondside timeline score.ly [--json]                tempo steps: moment, seconds, quarters/min
 pondside handlers score.ly --scd cues.scd [--project dir]
-pondside lexicon list | show <id> | impl <id> | check score.ly | include score.ly
+pondside lexicon list | search <words> | show <id> | impl <id>
+pondside lexicon check score.ly | include score.ly | lock score.ly
+pondside lexicon drafts | promote <id> [--to user] | discard <id>   agent drafts: only people promote them
+pondside mockup  score.ly [--out file.wav] [--stems]   padded to the end mark; --stems: one file per staff
+pondside history score.ly [--show <rev> [--file f]] [--restore <rev>]   checkpoints, kept outside your repo
 pondside links   page.svg [--json]                 point-and-click links with bounds
 pondside doctor  [--json]                          every LilyPond found, version and origin
 pondside watch   file --on-change <command>
@@ -52,7 +56,12 @@ soundfont = "sounds/piano.sf2"
 [supercollider]
 handlers = "patch/cues.scd"   # the default for `pondside handlers`
 resources = "patch/resources"
+
+[agent]
+command = "claude"            # what the app's Agent pane runs (default "claude")
 ```
+
+File › LilyPond Version… in the app writes `[lilypond] version` for you.
 
 ## MCP
 
@@ -80,7 +89,13 @@ resolve against it.
 | `query` | `file`, `from_line?`, `to_line?` | events in order: `{ kind, text, line, character, pitches, duration, explicitDuration }` |
 | `render` | `file`, `format?` (`pdf`·`svg`·`png`), `out?` | `{ files }` |
 | `cues` | `file`, `rate?` | cues.json (below) |
-| `lexicon_check` | `file` | problems with `\lexicon` uses, by line |
+| `lexicon_check` | `file` | problems with `\lexicon` and `\startGraphic` uses, by line |
+| `score_context` | `file?`, `line?`, `character?` | what "here" means: the event, its staff's `.ly`, its bar, the graphic it is in (entry, params, start, stop); from the running app also `system: { first, last, next }`. Without arguments, the app's selection |
+| `lexicon_search` | `query`, `limit?` | tier 0 lines, best first |
+| `lexicon_entry` | `id` | tier 1: params with types, ranges and docs; README |
+| `graphic_preview` | `id`, `params?`, `bars?`, `music?`, `out?` | `{ svg, source, diagnostics }`: the entry engraved on its own staff |
+| `graphic_insert` | `file`, `id`, `params?`, `start_line`, `start_character`, `stop_line`, `stop_character`, `root?` | inserts `\startGraphic`…`\stopGraphic` on those events (one staff), writes `lexicon.ily` and includes it in the root |
+| `lexicon_propose` | `id`, `entry_toml`, `impl`, `readme` | writes a validated draft to `Lexicon/drafts/entries/<id>`; the user accepts or discards it |
 
 `query` pitches are absolute Dutch names (`c'` is middle C) in any input
 language, with `\relative` and chord-repeat (`q`) resolved. `character` is
@@ -100,6 +115,27 @@ errors.
 Read the index first, open an entry only when it is a candidate, and read
 its implementation only to adapt it.
 
+### Skills (resources and prompts)
+
+| URI / prompt | Use |
+|---|---|
+| `lexicon://guide/graphics` · `graphic-notation` | the default for graphic notation: `score_context` → `lexicon_search` → `graphic_preview` → `graphic_insert`; the core graphic entries; envelopes; combining entries |
+| `lexicon://guide/entries` · `lexicon-entries` | writing a new entry when no combination satisfies the user: the graphics kit's API, the entry folder, LilyPond and Guile gotchas, checks |
+
+### Graphic entries
+
+`\startGraphic "id" #'((param . value) …)` on an event and `\stopGraphic`
+on a later one in the same staff draw a graphic between them, at layout
+time, through the graphics kit (`pondside-graphics.ily`, included by
+`lexicon.ily`). Core graphic entries: `grain-cloud`, `staff-ripple`,
+`wedge`, `swell-shape`, `scribble`, `arc`, `squiggle`, `pitch-band`,
+`aleatoric-box`. `envelope` params take a number or `(swell n lo hi)`,
+`(linear a b)`, `(pulse …)`, `(lfo …)`, `(points (q v) …)`, `(sum …)`,
+`(product …)`, `(smooth …)`. Graphics are linked by point-and-click to
+their `\startGraphic`. Drafts in `Lexicon/drafts/` are usable at once and
+listed as drafts; `pondside lexicon lock` records the versions a score uses
+in a comment block, and `check` warns when an entry has changed since.
+
 ## cues.json
 
 ```jsonc
@@ -116,7 +152,9 @@ its implementation only to adapt it.
       "position": { "measure": 42, "beat": 1, "moment": "167/4" },  // moment: whole notes, exact
       "seconds": 133.333,
       "samples": 6400000,           // round(seconds × sampleRate)
-      "handler": "cue12"            // the handler's name in the generated .scd
+      "handler": "cue12",           // the handler's name in the generated .scd
+      "entry": "air-tone",          // a Lexicon entry's cue: the entry, and its
+      "params": { "amp": 0.25, "dur": 4, "rate": 1 }   // [sound] params with real timing
     }
   ],
   "marks": [ { "text": "improv 1", "position": { … }, "seconds": 210.5 } ],
@@ -161,6 +199,7 @@ calls a method from the shell.
 | `app.documents` | | each open score: `root`, `files`, `active` file, `status` |
 | `document.text` | `path?` | `{ path, text }`: the app's current text, including unsaved edits |
 | `document.selection` | `path?` | `{ path, start, end, text, events }`, with positions as `{ line, character }` |
+| `document.context` | `path?`, `line?`, `character?` | the selection's (or that point's) `score_context`, with `system: { first, last, next }` from the engraving |
 | `document.select` | `path, line, character` | puts the caret there (the score highlights it); returns the selection |
 | `document.engrave` | `path?` | starts a compile; the result arrives as `compile.finished` |
 | `document.cues` | `path?` | the latest cues.json |

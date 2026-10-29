@@ -40,16 +40,12 @@ final class PalettePanel: NSPanel, NSTextFieldDelegate, NSTableViewDataSource, N
         isOpaque = false
         appearance = NSAppearance(named: .darkAqua)
 
-        let glass = NSVisualEffectView()
-        glass.material = .hudWindow
-        glass.blendingMode = .behindWindow
-        glass.state = .active
-        glass.wantsLayer = true
-        glass.layer?.cornerRadius = 12
-        glass.layer?.masksToBounds = true
+        let glass = GlassView(cornerRadius: 12)
         contentView = glass
 
-        field.placeholderString = placeholder
+        field.placeholderAttributedString = NSAttributedString(string: placeholder, attributes: [
+            .foregroundColor: Theme.glassSecondaryText, .font: NSFont.systemFont(ofSize: Theme.bodySize + 3),
+        ])
         field.font = .systemFont(ofSize: Theme.bodySize + 3)
         field.isBordered = false
         field.drawsBackground = false
@@ -193,7 +189,7 @@ private final class PaletteCell: NSTableCellView {
         super.init(frame: .zero)
         identifier = Self.id
         detail.font = Theme.secondaryFont
-        detail.textColor = Theme.secondaryText
+        detail.textColor = Theme.glassSecondaryText
         hint.font = .monospacedSystemFont(ofSize: Theme.secondarySize, weight: .medium)
         hint.textColor = Theme.accent
         hint.alignment = .right
@@ -219,7 +215,7 @@ private final class PaletteCell: NSTableCellView {
     required init?(coder: NSCoder) { fatalError() }
 
     func show(_ row: PaletteRow) {
-        let color = row.enabled ? Theme.text : Theme.secondaryText
+        let color = row.enabled ? Theme.text : Theme.glassSecondaryText
         let s = NSMutableAttributedString(string: row.title, attributes: [.font: Theme.bodyFont, .foregroundColor: color])
         let chars = Array(row.title)
         var utf16 = [Int](repeating: 0, count: chars.count + 1)
